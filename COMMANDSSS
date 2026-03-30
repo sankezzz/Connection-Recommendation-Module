@@ -1,0 +1,3 @@
+START SERVER : 
+
+py -m  uvicorn main:app --reload   
