@@ -4,8 +4,10 @@ from sqlalchemy import text
 from app.db.postgres import engine
 from app.db.postgres import engine
 from app.db.chromadb import get_chroma_collection
+from app.routes import  users, recommendations
 
-app = FastAPI()
+
+app = FastAPI(title="Commodity Matching API")
 
 
 @app.get("/health")
@@ -23,4 +25,7 @@ async def health():
         "chromadb": "connected",
         "vectors_in_db": count
     }
-# @app.get("/test-chromadb")
+
+
+app.include_router(users.router)
+app.include_router(recommendations.router)
