@@ -4,7 +4,7 @@ from sqlalchemy import text
 from app.db.postgres import engine
 from app.db.postgres import engine
 # from app.db.chromadb import get_chroma_collection
-from app.routes import  users, recommendations
+from app.routes import users, recommendations, connections
 
 
 app = FastAPI(title="Commodity Matching API")
@@ -29,4 +29,5 @@ app = FastAPI(title="Commodity Matching API")
 
 # app.include_router(users.router)
 app.include_router(recommendations.router)
+app.include_router(connections.router)
 
