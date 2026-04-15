@@ -1,8 +1,10 @@
 fastapi
-uvicorn 
-sqlalchemy 
-asyncpg 
-python-dotenv 
-alembic 
-psycopg2-binary 
+uvicorn
+sqlalchemy
+asyncpg
+python-dotenv
+pydantic-settings
+numpy
+alembic
+psycopg2-binary
 greenlet
