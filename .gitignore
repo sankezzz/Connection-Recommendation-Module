@@ -2,3 +2,4 @@ __pycache__
 .env
 chroma_commodity_db
 vector_store
+cloudflared.exe
