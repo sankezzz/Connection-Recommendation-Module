@@ -1,4 +1,4 @@
-from app.db.postgres import AsyncSessionLocal
+from app.modules.connections.db.postgres import AsyncSessionLocal
 from sqlalchemy import text
 # app/routes/recommendations.py
 from fastapi import APIRouter, HTTPException

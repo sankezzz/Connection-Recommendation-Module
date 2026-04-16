@@ -4,7 +4,11 @@ sqlalchemy
 asyncpg
 python-dotenv
 pydantic-settings
+pydantic[email]
 numpy
 alembic
 psycopg2-binary
 greenlet
+PyJWT
+python-multipart
+httpx

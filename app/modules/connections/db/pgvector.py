@@ -1,7 +1,7 @@
 # app/db/pgvector.py
 from sqlalchemy import text
 from fastapi import HTTPException
-from app.db.postgres import AsyncSessionLocal
+from app.modules.connections.db.postgres import AsyncSessionLocal
 
 
 def list_to_pgvec(vec: list[float]) -> str:

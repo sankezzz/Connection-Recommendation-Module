@@ -1,0 +1,330 @@
+from typing import Iterable
+from uuid import UUID
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
+
+from app.modules.profile.models import (
+    Commodity,
+    Interest,
+    Profile,
+    Profile_Commodity,
+    Profile_Document,
+    Profile_Interest,
+    Role,
+    User,
+)
+from app.modules.post.models import Post
+from app.modules.profile.schemas import (
+    CommodityOut,
+    InterestOut,
+    ProfileCreate,
+    ProfilePublicResponse,
+    ProfileResponse,
+    ProfileUpdate,
+    UserCreate,
+    UserResponse,
+    VerifyProfileRequest,
+    VALID_IDENTITY_TYPES,
+    VALID_BUSINESS_TYPES,
+)
+
+
+class ProfileConflictError(Exception):
+    pass
+
+class ProfileNotFoundError(Exception):
+    pass
+
+class ProfileValidationError(Exception):
+    pass
+
+class UserConflictError(Exception):
+    pass
+
+
+def _uniq(ids: Iterable[int]) -> list[int]:
+    return list(dict.fromkeys(ids))
+
+
+# ---------------------------------------------------------------------------
+# User
+# ---------------------------------------------------------------------------
+
+def create_user(db: Session, user_id: UUID, payload: UserCreate) -> UserResponse:
+    if db.query(User.id).filter(User.id == user_id).first():
+        raise UserConflictError("User already registered")
+
+    if db.query(User.id).filter(
+        User.country_code == payload.country_code,
+        User.phone_number == payload.phone_number,
+    ).first():
+        raise UserConflictError("Phone number already registered")
+
+    try:
+        user = User(
+            id=user_id,
+            country_code=payload.country_code,
+            phone_number=payload.phone_number,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return UserResponse(
+            id=user.id,
+            phone_number=user.phone_number,
+            country_code=user.country_code,
+            created_at=user.created_at,
+        )
+    except Exception:
+        db.rollback()
+        raise
+
+
+def get_profile_id_for_user(db: Session, user_id: UUID) -> int:
+    row = db.query(Profile.id).filter(Profile.users_id == user_id).first()
+    if not row:
+        raise ProfileNotFoundError("Profile not found for this user")
+    return row[0]
+
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+def _validate_role(db: Session, role_id: int) -> None:
+    if not db.query(Role.id).filter(Role.id == role_id).first():
+        raise ProfileValidationError(
+            f"Invalid role_id: {role_id}. Use 1=Trader, 2=Broker, 3=Exporter."
+        )
+
+
+def _validate_ids(db: Session, model, ids: list[int], field_name: str) -> list[int]:
+    ids = _uniq(ids)
+    if not ids:
+        return []
+    found = {row[0] for row in db.query(model.id).filter(model.id.in_(ids)).all()}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise ProfileValidationError(f"Invalid {field_name}: {missing}")
+    return ids
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _load_profile_for_user(db: Session, user_id: UUID) -> Profile | None:
+    return (
+        db.query(Profile)
+        .options(
+            joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
+            joinedload(Profile.interests).joinedload(Profile_Interest.interest),
+        )
+        .filter(Profile.users_id == user_id)
+        .first()
+    )
+
+
+def _to_response(profile: Profile) -> ProfileResponse:
+    return ProfileResponse(
+        id=profile.id,
+        name=profile.name,
+        role_id=profile.role_id,
+        is_verified=profile.is_verified,
+        is_user_verified=profile.is_user_verified,
+        is_business_verified=profile.is_business_verified,
+        followers_count=profile.followers_count,
+        commodities=[CommodityOut.model_validate(pc.commodity) for pc in profile.commodities],
+        interests=[InterestOut.model_validate(pi.interest) for pi in profile.interests],
+        business_name=profile.business_name,
+        latitude=profile.latitude,
+        longitude=profile.longitude,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Profile CRUD
+# ---------------------------------------------------------------------------
+
+def create_profile(db: Session, user_id: UUID, payload: ProfileCreate) -> ProfileResponse:
+    if not db.query(User.id).filter(User.id == user_id).first():
+        raise ProfileNotFoundError("User not found — create user first via POST /profile/user")
+
+    if db.query(Profile.id).filter(Profile.users_id == user_id).first():
+        raise ProfileConflictError("Profile already exists for this user")
+
+    if payload.quantity_min > payload.quantity_max:
+        raise ProfileValidationError("quantity_min cannot be greater than quantity_max")
+
+    _validate_role(db, payload.role_id)
+    commodity_ids = _validate_ids(db, Commodity, payload.commodities, "commodity_ids")
+    interest_ids = _validate_ids(db, Interest, payload.interests, "interest_ids")
+
+    try:
+        profile = Profile(
+            users_id=user_id,
+            role_id=payload.role_id,
+            name=payload.name.strip(),
+            business_name=payload.business_name.strip() if payload.business_name else None,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            quantity_min=payload.quantity_min,
+            quantity_max=payload.quantity_max,
+        )
+        db.add(profile)
+        db.flush()
+
+        if commodity_ids:
+            db.add_all([
+                Profile_Commodity(profile_id=profile.id, commodity_id=c_id)
+                for c_id in commodity_ids
+            ])
+        if interest_ids:
+            db.add_all([
+                Profile_Interest(profile_id=profile.id, interest_id=i_id)
+                for i_id in interest_ids
+            ])
+
+        db.commit()
+        return _to_response(_load_profile_for_user(db, user_id))
+    except Exception:
+        db.rollback()
+        raise
+
+
+def get_my_profile(db: Session, user_id: UUID) -> ProfileResponse:
+    profile = _load_profile_for_user(db, user_id)
+    if not profile:
+        raise ProfileNotFoundError("Profile not found")
+    return _to_response(profile)
+
+
+def update_profile(db: Session, user_id: UUID, payload: ProfileUpdate) -> ProfileResponse:
+    profile = db.query(Profile).filter(Profile.users_id == user_id).first()
+    if not profile:
+        raise ProfileNotFoundError("Profile not found")
+
+    data = payload.model_dump(exclude_unset=True)
+
+    qmin = data.get("quantity_min", profile.quantity_min)
+    qmax = data.get("quantity_max", profile.quantity_max)
+    if qmin and qmax and qmin > qmax:
+        raise ProfileValidationError("quantity_min cannot exceed quantity_max")
+
+    for field, value in data.items():
+        if field not in ("commodities", "interests"):
+            setattr(profile, field, value)
+
+    if "commodities" in data:
+        current = {pc.commodity_id for pc in profile.commodities}
+        requested = set(data["commodities"])
+        to_remove = current - requested
+        to_add = requested - current
+        if to_remove:
+            db.query(Profile_Commodity).filter(
+                Profile_Commodity.profile_id == profile.id,
+                Profile_Commodity.commodity_id.in_(to_remove),
+            ).delete(synchronize_session=False)
+        for c_id in to_add:
+            db.add(Profile_Commodity(profile_id=profile.id, commodity_id=c_id))
+
+    if "interests" in data:
+        current = {pi.interest_id for pi in profile.interests}
+        requested = set(data["interests"])
+        to_remove = current - requested
+        to_add = requested - current
+        if to_remove:
+            db.query(Profile_Interest).filter(
+                Profile_Interest.profile_id == profile.id,
+                Profile_Interest.interest_id.in_(to_remove),
+            ).delete(synchronize_session=False)
+        for i_id in to_add:
+            db.add(Profile_Interest(profile_id=profile.id, interest_id=i_id))
+
+    db.commit()
+    return _to_response(_load_profile_for_user(db, user_id))
+
+
+def delete_profile(db: Session, user_id: UUID) -> None:
+    profile = db.query(Profile).filter(Profile.users_id == user_id).first()
+    if not profile:
+        raise ProfileNotFoundError("Profile not found")
+    try:
+        db.delete(profile)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
+def get_profile_by_id(db: Session, profile_id: int) -> ProfilePublicResponse:
+    profile = (
+        db.query(Profile)
+        .options(
+            joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
+        )
+        .filter(Profile.id == profile_id)
+        .first()
+    )
+    if not profile:
+        raise ProfileNotFoundError("Profile not found")
+
+    posts_count = (
+        db.query(func.count(Post.id)).filter(Post.profile_id == profile_id).scalar() or 0
+    )
+
+    return ProfilePublicResponse(
+        id=profile.id,
+        name=profile.name,
+        role_id=profile.role_id,
+        is_verified=profile.is_verified,
+        commodities=[CommodityOut.model_validate(pc.commodity) for pc in profile.commodities],
+        business_name=profile.business_name,
+        latitude=profile.latitude,
+        longitude=profile.longitude,
+        posts_count=posts_count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Verification — Screen 6 (optional)
+# ---------------------------------------------------------------------------
+
+def submit_verification(db: Session, user_id: UUID, payload: VerifyProfileRequest) -> dict:
+    profile = db.query(Profile).filter(Profile.users_id == user_id).first()
+    if not profile:
+        raise ProfileNotFoundError("Create a profile before submitting verification documents")
+
+    if not payload.identity_proof and not payload.business_proof:
+        raise ProfileValidationError("Provide at least one document")
+
+    submitted = []
+
+    def _upsert_doc(doc, valid_types: set):
+        if doc.document_type not in valid_types:
+            raise ProfileValidationError(
+                f"Invalid document_type '{doc.document_type}'. Valid: {sorted(valid_types)}"
+            )
+        existing = db.query(Profile_Document).filter(
+            Profile_Document.profile_id == profile.id,
+            Profile_Document.document_type == doc.document_type,
+        ).first()
+        if existing:
+            existing.document_number = doc.document_number
+            existing.verification_status = "pending"
+        else:
+            db.add(Profile_Document(
+                profile_id=profile.id,
+                document_type=doc.document_type,
+                document_number=doc.document_number,
+            ))
+        submitted.append(doc.document_type)
+
+    if payload.identity_proof:
+        _upsert_doc(payload.identity_proof, VALID_IDENTITY_TYPES)
+    if payload.business_proof:
+        _upsert_doc(payload.business_proof, VALID_BUSINESS_TYPES)
+
+    db.commit()
+    return {"submitted": submitted, "status": "pending_review"}

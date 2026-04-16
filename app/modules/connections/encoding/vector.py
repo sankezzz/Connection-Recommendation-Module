@@ -1,5 +1,5 @@
 import numpy as np
-from app.weights_config import (
+from app.modules.connections.weights_config import (
     ALL_COMMODITIES, COMMODITY_BOOST,
     ROLE_DIMS, ROLE_AFFINITY, ROLE_OFFERS, ROLE_BOOST,
     GEO_BOOST, QTY_BOOST, QTY_REF_MAX

@@ -3,8 +3,8 @@ import asyncio
 import asyncpg
 import os
 from dotenv import load_dotenv
-from app.encoding.vector import build_query_vector
-from app.db.chromadb import get_chroma_collection
+from app.modules.connections.encoding.vector import build_query_vector
+from app.modules.connections.db.chromadb import get_chroma_collection
 
 load_dotenv()
 

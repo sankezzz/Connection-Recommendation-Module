@@ -1,10 +1,10 @@
 # app/routes/users.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.db.postgres import AsyncSessionLocal
+from app.modules.connections.db.postgres import AsyncSessionLocal
 # from app.db.chromadb import get_chroma_collection  # replaced by pgvector
-from app.db.pgvector import list_to_pgvec
-from app.encoding.vector import build_candidate_vector
+from app.modules.connections.db.pgvector import list_to_pgvec
+from app.modules.connections.encoding.vector import build_candidate_vector
 from sqlalchemy import text
 
 router = APIRouter(prefix="/users", tags=["users"])

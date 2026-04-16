@@ -1,4 +1,4 @@
-from app.db.chromadb import get_chroma_collection
+from app.modules.connections.db.chromadb import get_chroma_collection
 
 collection = get_chroma_collection()
 

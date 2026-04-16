@@ -1,7 +1,7 @@
 # app/db/connections.py
 from fastapi import HTTPException
 from sqlalchemy import text
-from app.db.postgres import AsyncSessionLocal
+from app.modules.connections.db.postgres import AsyncSessionLocal
 
 
 # ─── Shared profile shape returned in list responses ─────────────────────────
@@ -163,7 +163,7 @@ async def get_received_requests(me: int) -> list[dict]:
     async with AsyncSessionLocal() as db:
         result = await db.execute(text("""
             SELECT mr.id, mr.sender_id, mr.status, mr.sent_at,
-                   u.role, u.commodity, u.city, u.state,
+                   u.user_id,u.role, u.commodity, u.city, u.state,
                    u.min_quantity_mt, u.max_quantity_mt
             FROM message_requests mr
             JOIN "Users" u ON u.user_id = mr.sender_id
@@ -185,7 +185,7 @@ async def get_sent_requests(me: int) -> list[dict]:
     async with AsyncSessionLocal() as db:
         result = await db.execute(text("""
             SELECT mr.id, mr.receiver_id, mr.status, mr.sent_at, mr.acted_at,
-                   u.role, u.commodity, u.city, u.state,
+                   u.user_id,u.role, u.commodity, u.city, u.state,
                    u.min_quantity_mt, u.max_quantity_mt
             FROM message_requests mr
             JOIN "Users" u ON u.user_id = mr.receiver_id

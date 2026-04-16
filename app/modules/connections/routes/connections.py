@@ -1,7 +1,7 @@
 # app/routes/connections.py
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from app.db import connections as db
+from app.modules.connections.db import connections as db
 
 router = APIRouter(prefix="/connections", tags=["connections"])
 

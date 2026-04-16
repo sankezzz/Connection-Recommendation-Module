@@ -1,33 +1,17 @@
-# main.py
 from fastapi import FastAPI
-from sqlalchemy import text
-from app.db.postgres import engine
-from app.db.postgres import engine
-# from app.db.chromadb import get_chroma_collection
-from app.routes import users, recommendations, connections
+from app.modules.connections.routes import connections
+from app.modules.connections.routes import recommendations
+from app.modules.auth.router import router as auth_router
+from app.modules.profile.router import router as profile_router
 
+app = FastAPI(title="Vanijyaa API")
 
-app = FastAPI(title="Commodity Matching API")
+# Auth module
+app.include_router(auth_router)
 
+# Profile module
+app.include_router(profile_router)
 
-# @app.get("/health")
-# async def health():
-#     # Test Postgres
-#     async with engine.connect() as conn:
-#         await conn.execute(text("SELECT 1"))
-
-#     # Test ChromaDB
-#     collection = get_chroma_collection()
-#     count = collection.count()
-
-#     return {
-#         "postgres": "connected",
-#         "chromadb": "connected",
-#         "vectors_in_db": count
-#     }
-
-
-# app.include_router(users.router)
+# Connections & recommendations (old async routes)
 app.include_router(recommendations.router)
 app.include_router(connections.router)
-

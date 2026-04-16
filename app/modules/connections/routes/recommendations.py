@@ -1,8 +1,8 @@
 # app/routes/recommendations.py
 from fastapi import APIRouter
 from pydantic import BaseModel
-from app.db.pgvector import fetch_user, vector_search, update_embedding
-from app.encoding.vector import build_query_vector, build_candidate_vector
+from app.modules.connections.db.pgvector import fetch_user, vector_search, update_embedding
+from app.modules.connections.encoding.vector import build_query_vector, build_candidate_vector
 # ── OLD ChromaDB imports (removed) ──
 # import time
 # from app.db.postgres import AsyncSessionLocal
