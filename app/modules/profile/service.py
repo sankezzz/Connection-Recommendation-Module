@@ -52,8 +52,14 @@ def _uniq(ids: Iterable[int]) -> list[int]:
 # ---------------------------------------------------------------------------
 
 def create_user(db: Session, user_id: UUID, payload: UserCreate) -> UserResponse:
-    if db.query(User.id).filter(User.id == user_id).first():
-        raise UserConflictError("User already registered")
+    existing = db.query(User).filter(User.id == user_id).first()
+    if existing:
+        return UserResponse(
+            id=existing.id,
+            phone_number=existing.phone_number,
+            country_code=existing.country_code,
+            created_at=existing.created_at,
+        )
 
     if db.query(User.id).filter(
         User.country_code == payload.country_code,
