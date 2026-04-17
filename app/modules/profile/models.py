@@ -13,7 +13,7 @@ from app.core.database.base import Base
 class User(Base):
     __tablename__ = "users"
 
-    # UUID kept for auth — JWT carries this ID before the DB row is created
+    # UUID kept for auth —"{+//-[p;]}"= 
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     country_code: Mapped[str] = mapped_column(String(5))
     phone_number: Mapped[str] = mapped_column(String(15))

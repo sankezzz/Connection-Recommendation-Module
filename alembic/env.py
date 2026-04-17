@@ -16,7 +16,15 @@ from app.modules.profile.models import (  # noqa: F401
     Profile_Interest,
     Profile_Document,
 )
-from app.modules.post.models import Post  # noqa: F401
+from app.modules.post.models import (  # noqa: F401
+    Post,
+    PostCategory,
+    PostView,
+    PostLike,
+    PostComment,
+    PostShare,
+    PostSave,
+)
 
 from app.core.config import settings
 

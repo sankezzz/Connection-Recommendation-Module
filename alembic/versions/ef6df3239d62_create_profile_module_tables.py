@@ -161,22 +161,132 @@ def upgrade() -> None:
     )
 
     # ------------------------------------------------------------------
+    # post_categories — fixed int IDs, seeded below
+    # 1=Market Update  2=Knowledge  3=Discussion  4=Deal/Requirement  5=Other
+    # ------------------------------------------------------------------
+    op.create_table(
+        'post_categories',
+        sa.Column('id', sa.Integer(), nullable=False),   # no autoincrement — seeded
+        sa.Column('name', sa.String(length=100), nullable=False),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('name'),
+    )
+
+    op.execute(
+        "INSERT INTO post_categories (id, name) VALUES "
+        "(1, 'Market Update'), "
+        "(2, 'Knowledge'), "
+        "(3, 'Discussion'), "
+        "(4, 'Deal/Requirement'), "
+        "(5, 'Other')"
+    )
+
+    # ------------------------------------------------------------------
     # posts
     # ------------------------------------------------------------------
     op.create_table(
         'posts',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('profile_id', sa.Integer(), nullable=False),
-        sa.Column('title', sa.String(length=200), nullable=False),
+        sa.Column('category_id', sa.Integer(), nullable=False),
+        sa.Column('commodity_id', sa.Integer(), nullable=False),
+        sa.Column('image_url', sa.String(), nullable=True),
+        sa.Column('caption', sa.Text(), nullable=False),
+        # Visibility: True=all users  False=followers only
+        sa.Column('is_public', sa.Boolean(), nullable=False),
+        # null=all roles  |  array of role IDs = targeted roles
+        sa.Column('target_roles', sa.ARRAY(sa.Integer()), nullable=True),
+        # Interaction controls
+        sa.Column('allow_comments', sa.Boolean(), nullable=False),
+        # Deal/Requirement fields (populated when category_id=4)
+        sa.Column('grain_type_size', sa.String(length=100), nullable=True),
+        sa.Column('commodity_quantity', sa.Float(), nullable=True),
+        sa.Column('price_type', sa.String(length=20), nullable=True),  # 'fixed' | 'negotiable'
+        # Other category description (populated when category_id=5)
+        sa.Column('other_description', sa.Text(), nullable=True),
+        # Counters
+        sa.Column('like_count', sa.Integer(), nullable=False),
+        sa.Column('view_count', sa.Integer(), nullable=False),
+        sa.Column('comment_count', sa.Integer(), nullable=False),
+        sa.Column('share_count', sa.Integer(), nullable=False),
+        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(['category_id'], ['post_categories.id']),
+        sa.ForeignKeyConstraint(['commodity_id'], ['commodities.id']),
+        sa.ForeignKeyConstraint(['profile_id'], ['profile.id'], ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id'),
+    )
+
+    # ------------------------------------------------------------------
+    # post interaction tables
+    # ------------------------------------------------------------------
+    op.create_table(
+        'post_views',
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column('post_id', sa.Integer(), nullable=False),
+        sa.Column('profile_id', sa.Integer(), nullable=False),
+        sa.Column('viewed_at', sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(['post_id'], ['posts.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['profile_id'], ['profile.id'], ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('post_id', 'profile_id', name='uq_post_view'),
+    )
+
+    op.create_table(
+        'post_likes',
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column('post_id', sa.Integer(), nullable=False),
+        sa.Column('profile_id', sa.Integer(), nullable=False),
+        sa.Column('liked_at', sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(['post_id'], ['posts.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['profile_id'], ['profile.id'], ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('post_id', 'profile_id', name='uq_post_like'),
+    )
+
+    op.create_table(
+        'post_comments',
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column('post_id', sa.Integer(), nullable=False),
+        sa.Column('profile_id', sa.Integer(), nullable=False),
         sa.Column('content', sa.Text(), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['profile_id'], ['profile.id']),
+        sa.ForeignKeyConstraint(['post_id'], ['posts.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['profile_id'], ['profile.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
+    )
+
+    op.create_table(
+        'post_shares',
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column('post_id', sa.Integer(), nullable=False),
+        sa.Column('profile_id', sa.Integer(), nullable=False),
+        sa.Column('shared_at', sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(['post_id'], ['posts.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['profile_id'], ['profile.id'], ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id'),
+    )
+
+    op.create_table(
+        'post_saves',
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column('post_id', sa.Integer(), nullable=False),
+        sa.Column('profile_id', sa.Integer(), nullable=False),
+        sa.Column('saved_at', sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(['post_id'], ['posts.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['profile_id'], ['profile.id'], ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('post_id', 'profile_id', name='uq_post_save'),
     )
 
 
 def downgrade() -> None:
+    op.drop_table('post_saves')
+    op.drop_table('post_shares')
+    op.drop_table('post_comments')
+    op.drop_table('post_likes')
+    op.drop_table('post_views')
     op.drop_table('posts')
+    op.drop_table('post_categories')
     op.drop_table('profile_documents')
     op.drop_table('profile_interests')
     op.drop_table('profile_commodities')

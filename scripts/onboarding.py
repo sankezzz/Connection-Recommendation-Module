@@ -22,9 +22,21 @@ Run from project root:
 
 import sys
 import os
+import base64
+import json
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import httpx
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    """Decode JWT payload without signature verification."""
+    payload_b64 = token.split(".")[1]
+    padding = 4 - len(payload_b64) % 4
+    if padding != 4:
+        payload_b64 += "=" * padding
+    return json.loads(base64.urlsafe_b64decode(payload_b64))
 
 BASE = "http://localhost:8000"
 
@@ -144,7 +156,8 @@ def step_send_otp(country_code: str, phone_number: str) -> None:
     print("  OTP sent. Check your phone (or server console in DEV_MODE).")
 
 
-def step_verify_otp(country_code: str, phone_number: str) -> str:
+def step_verify_otp(country_code: str, phone_number: str) -> tuple[str, str]:
+    """Returns (token, user_id_str)."""
     print("\n[2/5] Verifying OTP...")
     otp_code = _prompt("Enter the OTP you received")
     body = _check(
@@ -157,21 +170,26 @@ def step_verify_otp(country_code: str, phone_number: str) -> str:
         expect=200,
     )
     token = body["data"]["onboarding_token"]
-    print("  Onboarding token received.")
-    return token
+    user_id = _decode_jwt_payload(token)["sub"]
+    print(f"  Onboarding token received.  user_id={user_id}")
+    return token, user_id
 
 
-def step_create_user(token: str) -> None:
+def step_create_user(user_id: str, phone_number: str, country_code: str) -> None:
     print("\n[3/5] Creating user record...")
     _check(
         "POST /profile/user",
-        _hit("POST", "/profile/user", token=token),
+        _hit("POST", "/profile/user", params={
+            "user_id":      user_id,
+            "phone_number": phone_number,
+            "country_code": country_code,
+        }),
         expect=201,
     )
     print("  User created.")
 
 
-def step_create_profile(token: str) -> dict:
+def step_create_profile(user_id: str) -> dict:
     print("\n[4/5] Creating profile...")
 
     # Screen 3 — Select role
@@ -191,7 +209,7 @@ def step_create_profile(token: str) -> dict:
 
     body = _check(
         "POST /profile/",
-        _hit("POST", "/profile/", token=token, json={
+        _hit("POST", "/profile/", params={"user_id": user_id}, json={
             "role_id":      role_id,
             "name":         name,
             "commodities":  commodity_ids,
@@ -207,7 +225,7 @@ def step_create_profile(token: str) -> dict:
     return body["data"]
 
 
-def step_verify_profile(token: str) -> None:
+def step_verify_profile(user_id: str) -> None:
     """Screen 6 — optional verification docs."""
     print("\n[5/5] Profile verification (optional)")
     skip = _prompt("Submit verification documents? (y/N)", "N").lower()
@@ -238,7 +256,7 @@ def step_verify_profile(token: str) -> None:
 
     _check(
         "POST /profile/verify",
-        _hit("POST", "/profile/verify", token=token, json=payload),
+        _hit("POST", "/profile/verify", params={"user_id": user_id}, json=payload),
         expect=200,
     )
     print("  Documents submitted for verification.")
@@ -258,10 +276,10 @@ def main():
     phone_number  = _prompt("Phone number (digits only)")
 
     step_send_otp(country_code, phone_number)
-    token   = step_verify_otp(country_code, phone_number)
-    step_create_user(token)
-    profile = step_create_profile(token)
-    step_verify_profile(token)
+    token, user_id = step_verify_otp(country_code, phone_number)
+    step_create_user(user_id, phone_number, country_code)
+    profile = step_create_profile(user_id)
+    step_verify_profile(user_id)
 
     print()
     print("=" * 60)
