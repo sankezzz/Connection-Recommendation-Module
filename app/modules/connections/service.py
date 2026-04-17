@@ -1,0 +1,427 @@
+"""
+Connections service layer — all business + DB logic, zero FastAPI imports.
+
+Sections:
+  A. Follow graph       (user_connections — UUID FK → users.id)
+  B. Message requests   (message_requests — UUID FK → users.id)
+  C. User search        (profile + profile_commodities + commodities + roles)
+  D. Recommendations    (user_embeddings JSONB — cosine similarity in Python)
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from uuid import UUID
+
+import numpy as np
+from fastapi import HTTPException
+from sqlalchemy.orm import Session, joinedload
+
+from app.modules.connections.models import MessageRequest, UserConnection
+from app.modules.profile.models import (
+    Commodity,
+    Profile,
+    Profile_Commodity,
+    Role,
+    UserEmbedding,
+)
+from app.modules.connections.encoding.vector import build_query_vector
+
+TOP_K = 20
+
+# role_id (int) → lowercase string used by the vector encoder
+_ROLE_ID_TO_NAME = {1: "trader", 2: "broker", 3: "exporter"}
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _load_profile(db: Session, user_id: UUID) -> Profile | None:
+    """Load a profile with role + commodities in one query."""
+    return (
+        db.query(Profile)
+        .options(
+            joinedload(Profile.role),
+            joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
+        )
+        .filter(Profile.users_id == user_id)
+        .first()
+    )
+
+
+def _load_profiles_bulk(db: Session, user_ids: list[UUID]) -> dict[UUID, Profile]:
+    """Load multiple profiles in a single query. Returns {users_id: Profile}."""
+    if not user_ids:
+        return {}
+    rows = (
+        db.query(Profile)
+        .options(
+            joinedload(Profile.role),
+            joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
+        )
+        .filter(Profile.users_id.in_(user_ids))
+        .all()
+    )
+    return {p.users_id: p for p in rows}
+
+
+def _fmt_profile(profile: Profile) -> dict:
+    """Serialize a Profile into a flat dict for API responses."""
+    return {
+        "user_id":       str(profile.users_id),
+        "name":          profile.name,
+        "business_name": profile.business_name,
+        "role":          profile.role.name.lower() if profile.role else None,
+        "commodity":     [pc.commodity.name.lower() for pc in profile.commodities],
+        "is_verified":   profile.is_verified,
+        "qty_range":     f"{int(profile.quantity_min)}–{int(profile.quantity_max)}mt",
+        "latitude":      profile.latitude,
+        "longitude":     profile.longitude,
+    }
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    va, vb = np.array(a, dtype=float), np.array(b, dtype=float)
+    norm_a, norm_b = np.linalg.norm(va), np.linalg.norm(vb)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(va, vb) / (norm_a * norm_b))
+
+
+# ---------------------------------------------------------------------------
+# A. Follow graph
+# ---------------------------------------------------------------------------
+
+def follow_user(db: Session, follower_id: UUID, following_id: UUID) -> dict:
+    if follower_id == following_id:
+        raise HTTPException(status_code=400, detail="Cannot follow yourself.")
+    existing = db.query(UserConnection).filter(
+        UserConnection.follower_id == follower_id,
+        UserConnection.following_id == following_id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Already following this user.")
+    db.add(UserConnection(follower_id=follower_id, following_id=following_id))
+    db.commit()
+    return {"status": "following", "following_id": str(following_id)}
+
+
+def unfollow_user(db: Session, follower_id: UUID, following_id: UUID) -> dict:
+    conn = db.query(UserConnection).filter(
+        UserConnection.follower_id == follower_id,
+        UserConnection.following_id == following_id,
+    ).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="You are not following this user.")
+    db.delete(conn)
+    db.commit()
+    return {"status": "unfollowed", "following_id": str(following_id)}
+
+
+def get_followers(db: Session, user_id: UUID) -> list[dict]:
+    conns = (
+        db.query(UserConnection)
+        .filter(UserConnection.following_id == user_id)
+        .order_by(UserConnection.followed_at.desc())
+        .all()
+    )
+    profiles = _load_profiles_bulk(db, [c.follower_id for c in conns])
+    result = []
+    for conn in conns:
+        p = profiles.get(conn.follower_id)
+        if p:
+            result.append({**_fmt_profile(p), "followed_at": conn.followed_at})
+    return result
+
+
+def get_following(db: Session, user_id: UUID) -> list[dict]:
+    conns = (
+        db.query(UserConnection)
+        .filter(UserConnection.follower_id == user_id)
+        .order_by(UserConnection.followed_at.desc())
+        .all()
+    )
+    profiles = _load_profiles_bulk(db, [c.following_id for c in conns])
+    result = []
+    for conn in conns:
+        p = profiles.get(conn.following_id)
+        if p:
+            result.append({**_fmt_profile(p), "followed_at": conn.followed_at})
+    return result
+
+
+def is_following(db: Session, me: UUID, target: UUID) -> bool:
+    return (
+        db.query(UserConnection)
+        .filter(
+            UserConnection.follower_id == me,
+            UserConnection.following_id == target,
+        )
+        .first()
+    ) is not None
+
+
+# ---------------------------------------------------------------------------
+# B. Message requests
+# ---------------------------------------------------------------------------
+
+def send_message_request(db: Session, sender_id: UUID, receiver_id: UUID) -> dict:
+    if sender_id == receiver_id:
+        raise HTTPException(status_code=400, detail="Cannot send a request to yourself.")
+    existing = db.query(MessageRequest).filter(
+        MessageRequest.sender_id == sender_id,
+        MessageRequest.receiver_id == receiver_id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Message request already sent.")
+    req = MessageRequest(sender_id=sender_id, receiver_id=receiver_id)
+    db.add(req)
+    db.commit()
+    db.refresh(req)
+    return {"id": req.id, "status": req.status, "sent_at": req.sent_at}
+
+
+def withdraw_message_request(db: Session, sender_id: UUID, receiver_id: UUID) -> dict:
+    req = db.query(MessageRequest).filter(
+        MessageRequest.sender_id == sender_id,
+        MessageRequest.receiver_id == receiver_id,
+        MessageRequest.status == "pending",
+    ).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="No pending request found to withdraw.")
+    db.delete(req)
+    db.commit()
+    return {"status": "withdrawn", "receiver_id": str(receiver_id)}
+
+
+def respond_to_request(db: Session, request_id: int, me: UUID, action: str) -> dict:
+    """action must be 'accepted' or 'declined'. Only the receiver can call this."""
+    req = db.query(MessageRequest).filter(
+        MessageRequest.id == request_id,
+        MessageRequest.receiver_id == me,
+        MessageRequest.status == "pending",
+    ).first()
+    if not req:
+        raise HTTPException(
+            status_code=404,
+            detail="Request not found, already acted on, or you are not the receiver.",
+        )
+    req.status = action
+    req.acted_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"id": request_id, "status": action}
+
+
+def get_received_requests(db: Session, me: UUID) -> list[dict]:
+    """Pending inbox — requests waiting on me to accept or decline."""
+    reqs = (
+        db.query(MessageRequest)
+        .filter(MessageRequest.receiver_id == me, MessageRequest.status == "pending")
+        .order_by(MessageRequest.sent_at.desc())
+        .all()
+    )
+    profiles = _load_profiles_bulk(db, [r.sender_id for r in reqs])
+    return [
+        {"request_id": r.id, "from": _fmt_profile(profiles[r.sender_id]), "sent_at": r.sent_at}
+        for r in reqs
+        if r.sender_id in profiles
+    ]
+
+
+def get_sent_requests(db: Session, me: UUID) -> list[dict]:
+    """All requests I have sent, all statuses."""
+    reqs = (
+        db.query(MessageRequest)
+        .filter(MessageRequest.sender_id == me)
+        .order_by(MessageRequest.sent_at.desc())
+        .all()
+    )
+    profiles = _load_profiles_bulk(db, [r.receiver_id for r in reqs])
+    return [
+        {
+            "request_id": r.id,
+            "to":         _fmt_profile(profiles[r.receiver_id]),
+            "status":     r.status,
+            "sent_at":    r.sent_at,
+            "acted_at":   r.acted_at,
+        }
+        for r in reqs
+        if r.receiver_id in profiles
+    ]
+
+
+# ---------------------------------------------------------------------------
+# C. User search  (queries profile + roles + commodities)
+# ---------------------------------------------------------------------------
+
+def search_users(
+    db: Session,
+    me: UUID,
+    q: str | None = None,
+    role: str | None = None,
+    commodity: str | None = None,
+) -> list[dict]:
+    """
+    Filtered user search against the real profile table.
+    q       — partial match on name / business_name
+    role    — exact match: trader | broker | exporter
+    commodity — partial match on commodity name
+    Returns at most 50 results. Excludes the calling user.
+    """
+    query = (
+        db.query(Profile)
+        .options(
+            joinedload(Profile.role),
+            joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
+        )
+        .filter(Profile.users_id != me)
+    )
+
+    if role:
+        role_row = (
+            db.query(Role)
+            .filter(Role.name.ilike(role))
+            .first()
+        )
+        if role_row:
+            query = query.filter(Profile.role_id == role_row.id)
+        else:
+            return []
+
+    if commodity:
+        query = (
+            query
+            .join(Profile.commodities)
+            .join(Profile_Commodity.commodity)
+            .filter(Commodity.name.ilike(f"%{commodity}%"))
+        )
+
+    if q:
+        query = query.filter(
+            Profile.name.ilike(f"%{q}%") | Profile.business_name.ilike(f"%{q}%")
+        )
+
+    return [_fmt_profile(p) for p in query.limit(50).all()]
+
+
+def search_suggestions(db: Session, q: str) -> list[dict]:
+    """
+    Quick name / business_name suggestions. Returns top 8.
+    (The old pg_trgm fuzzy match is replaced by a simpler ILIKE — same result
+    for the common case without needing the trgm extension on the profile table.)
+    """
+    profiles = (
+        db.query(Profile)
+        .options(
+            joinedload(Profile.role),
+            joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
+        )
+        .filter(
+            Profile.name.ilike(f"%{q}%") | Profile.business_name.ilike(f"%{q}%")
+        )
+        .limit(8)
+        .all()
+    )
+    return [_fmt_profile(p) for p in profiles]
+
+
+# ---------------------------------------------------------------------------
+# D. Recommendations  (cosine similarity against user_embeddings JSONB)
+# ---------------------------------------------------------------------------
+
+def get_recommendations(db: Session, user_id: UUID) -> dict:
+    """
+    Top-K user matches for the calling user.
+    1. Builds WANT vector from their profile.
+    2. Loads all other user embeddings (IS vectors) from user_embeddings.
+    3. Computes cosine similarity in Python.
+    4. Returns top-20 with full profile info.
+    """
+    profile = _load_profile(db, user_id)
+    if not profile:
+        raise HTTPException(
+            status_code=404,
+            detail="Profile not found — complete onboarding first",
+        )
+
+    role_str = _ROLE_ID_TO_NAME.get(profile.role_id, "trader")
+    commodity_names = [pc.commodity.name.lower() for pc in profile.commodities]
+    want_vec = build_query_vector(
+        commodity_list=commodity_names,
+        role=role_str,
+        lat=float(profile.latitude),
+        lon=float(profile.longitude),
+        qty_min=int(profile.quantity_min),
+        qty_max=int(profile.quantity_max),
+    )
+
+    embeddings = (
+        db.query(UserEmbedding)
+        .filter(UserEmbedding.user_id != user_id)
+        .all()
+    )
+
+    scored = [
+        (round(_cosine_similarity(want_vec, emb.is_vector), 4), emb.user_id)
+        for emb in embeddings
+        if emb.is_vector
+    ]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = scored[:TOP_K]
+
+    match_profiles = _load_profiles_bulk(db, [uid for _, uid in top])
+    results = [
+        {**_fmt_profile(match_profiles[uid]), "similarity": sim}
+        for sim, uid in top
+        if uid in match_profiles
+    ]
+
+    return {
+        "user_id": str(user_id),
+        "role":    role_str,
+        "commodity": commodity_names,
+        "qty_range": f"{int(profile.quantity_min)}–{int(profile.quantity_max)}mt",
+        "total":   len(results),
+        "results": results,
+    }
+
+
+def custom_recommendation_search(
+    db: Session,
+    commodity: list[str],
+    role: str,
+    latitude_raw: float,
+    longitude_raw: float,
+    qty_min_mt: int,
+    qty_max_mt: int,
+) -> dict:
+    """
+    Ad-hoc vector search — no user_id needed.
+    Useful for showing preview results before or during signup.
+    """
+    want_vec = build_query_vector(
+        commodity_list=commodity,
+        role=role,
+        lat=latitude_raw,
+        lon=longitude_raw,
+        qty_min=qty_min_mt,
+        qty_max=qty_max_mt,
+    )
+
+    embeddings = db.query(UserEmbedding).all()
+
+    scored = [
+        (round(_cosine_similarity(want_vec, emb.is_vector), 4), emb.user_id)
+        for emb in embeddings
+        if emb.is_vector
+    ]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = scored[:TOP_K]
+
+    match_profiles = _load_profiles_bulk(db, [uid for _, uid in top])
+    results = [
+        {**_fmt_profile(match_profiles[uid]), "similarity": sim}
+        for sim, uid in top
+        if uid in match_profiles
+    ]
+    return {"total": len(results), "results": results}

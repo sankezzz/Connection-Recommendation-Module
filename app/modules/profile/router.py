@@ -1,14 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
 
-from app.dependencies import get_db, get_current_user_id, get_onboarding_user_id, get_onboarding_claims
-from app.core.security.jwt_handler import OnboardingClaims
+from app.dependencies import get_db, get_onboarding_user_id, get_onboarding_claims
+from app.core.security.jwt_handler import OnboardingClaims, create_access_token
 from app.modules.profile.schemas import (
     ProfileCreate,
     ProfileUpdate,
     UserCreate,
     VerifyProfileRequest,
+    FcmTokenUpdate,
 )
 from app.modules.profile.service import (
     create_user,
@@ -17,6 +18,8 @@ from app.modules.profile.service import (
     get_profile_by_id,
     delete_profile,
     update_profile,
+    update_fcm_token,
+    store_access_token,
     submit_verification,
     ProfileConflictError,
     ProfileNotFoundError,
@@ -30,6 +33,7 @@ router = APIRouter(prefix="/profile", tags=["Profile"])
 
 # ---------------------------------------------------------------------------
 # Step 1 — create user row (called right after OTP verification)
+# Onboarding token still required here — it carries phone + country code.
 # ---------------------------------------------------------------------------
 
 @router.post("/user", status_code=201)
@@ -47,6 +51,7 @@ def create_user_api(
 
 # ---------------------------------------------------------------------------
 # Step 2 — create profile (screens 3 + 4 + 5 combined)
+# Onboarding token still required here — it identifies the user being registered.
 # ---------------------------------------------------------------------------
 
 @router.post("/")
@@ -57,7 +62,7 @@ def create_profile_api(
 ):
     try:
         result = create_profile(db, current_user_id, payload)
-        return ok(result, "Profile created successfully")
+        return ok({"profile": result}, "Profile created successfully")
     except ProfileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ProfileConflictError as e:
@@ -67,17 +72,34 @@ def create_profile_api(
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — verification (screen 6, optional)
+# FCM token — no auth required, user_id passed as query param
+# ---------------------------------------------------------------------------
+
+@router.patch("/user/fcm-token")
+def update_fcm_token_api(
+    payload: FcmTokenUpdate,
+    user_id: UUID = Query(..., description="Acting user's UUID"),
+    db: Session = Depends(get_db),
+):
+    try:
+        update_fcm_token(db, user_id, payload.fcm_token)
+        return ok(message="FCM token updated")
+    except ProfileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Verification — no auth required, user_id passed as query param
 # ---------------------------------------------------------------------------
 
 @router.post("/verify")
 def verify_profile_api(
     payload: VerifyProfileRequest,
+    user_id: UUID = Query(..., description="Acting user's UUID"),
     db: Session = Depends(get_db),
-    current_user_id: UUID = Depends(get_current_user_id),
 ):
     try:
-        result = submit_verification(db, current_user_id, payload)
+        result = submit_verification(db, user_id, payload)
         return ok(result, "Documents submitted for verification")
     except ProfileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -86,16 +108,16 @@ def verify_profile_api(
 
 
 # ---------------------------------------------------------------------------
-# My profile
+# My profile — no auth, user_id as query param
 # ---------------------------------------------------------------------------
 
 @router.get("/me")
 def get_my_profile_api(
+    user_id: UUID = Query(..., description="Acting user's UUID"),
     db: Session = Depends(get_db),
-    current_user_id: UUID = Depends(get_current_user_id),
 ):
     try:
-        result = get_my_profile(db, current_user_id)
+        result = get_my_profile(db, user_id)
         return ok(result, "Profile fetched successfully")
     except ProfileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -104,11 +126,11 @@ def get_my_profile_api(
 @router.patch("/")
 def update_profile_api(
     payload: ProfileUpdate,
+    user_id: UUID = Query(..., description="Acting user's UUID"),
     db: Session = Depends(get_db),
-    current_user_id: UUID = Depends(get_current_user_id),
 ):
     try:
-        result = update_profile(db, current_user_id, payload)
+        result = update_profile(db, user_id, payload)
         return ok(result, "Profile updated successfully")
     except ProfileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -118,25 +140,24 @@ def update_profile_api(
 
 @router.delete("/")
 def delete_profile_api(
+    user_id: UUID = Query(..., description="Acting user's UUID"),
     db: Session = Depends(get_db),
-    current_user_id: UUID = Depends(get_current_user_id),
 ):
     try:
-        delete_profile(db, current_user_id)
+        delete_profile(db, user_id)
         return ok(message="Profile deleted successfully")
     except ProfileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
-# Public profile view (keep below /me and /verify to avoid path clashes)
+# Public profile view — no auth required
 # ---------------------------------------------------------------------------
 
 @router.get("/{profile_id}")
 def get_profile_api(
     profile_id: int,
     db: Session = Depends(get_db),
-    _: UUID = Depends(get_current_user_id),
 ):
     try:
         result = get_profile_by_id(db, profile_id)

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Iterable
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from app.modules.profile.models import (
     Profile_Interest,
     Role,
     User,
+    UserEmbedding,
 )
 from app.modules.post.models import Post
 from app.modules.profile.schemas import (
@@ -28,6 +30,13 @@ from app.modules.profile.schemas import (
     VALID_IDENTITY_TYPES,
     VALID_BUSINESS_TYPES,
 )
+from app.modules.connections.encoding.vector import build_candidate_vector
+
+# Maps profile.role_id → lowercase string used by the vector encoder
+_ROLE_ID_TO_NAME = {1: "trader", 2: "broker", 3: "exporter"}
+
+# Fields in ProfileUpdate that affect the IS vector
+_EMBEDDING_FIELDS = {"commodities", "latitude", "longitude", "quantity_min", "quantity_max"}
 
 
 class ProfileConflictError(Exception):
@@ -85,6 +94,27 @@ def create_user(db: Session, user_id: UUID, payload: UserCreate) -> UserResponse
     except Exception:
         db.rollback()
         raise
+
+
+def store_access_token(db: Session, user_id: UUID, token: str) -> None:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise ProfileNotFoundError("User not found")
+    user.access_token = token
+    db.commit()
+
+
+def get_access_token(db: Session, user_id: UUID) -> str | None:
+    row = db.query(User.access_token).filter(User.id == user_id).first()
+    return row[0] if row else None
+
+
+def update_fcm_token(db: Session, user_id: UUID, fcm_token: str) -> None:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise ProfileNotFoundError("User not found")
+    user.fcm_token = fcm_token
+    db.commit()
 
 
 def get_profile_id_for_user(db: Session, user_id: UUID) -> int:
@@ -150,6 +180,40 @@ def _to_response(profile: Profile) -> ProfileResponse:
 
 
 # ---------------------------------------------------------------------------
+# Embedding helper
+# ---------------------------------------------------------------------------
+
+def _upsert_user_embedding(db: Session, user_id: UUID) -> None:
+    """
+    Rebuild the 11-dim IS vector for a user profile and upsert into user_embeddings.
+    Called after profile create and after updates that touch embedding-relevant fields.
+    Does NOT commit — caller owns the transaction.
+    """
+    profile = _load_profile_for_user(db, user_id)
+    if not profile:
+        return
+
+    commodity_names = [pc.commodity.name.lower() for pc in profile.commodities]
+    role_str = _ROLE_ID_TO_NAME.get(profile.role_id, "trader")
+
+    vec = build_candidate_vector(
+        commodity_list=commodity_names,
+        role=role_str,
+        lat=float(profile.latitude),
+        lon=float(profile.longitude),
+        qty_min=int(profile.quantity_min),
+        qty_max=int(profile.quantity_max),
+    )
+
+    existing = db.query(UserEmbedding).filter(UserEmbedding.user_id == user_id).first()
+    if existing:
+        existing.is_vector = vec
+        existing.updated_at = datetime.now(timezone.utc)
+    else:
+        db.add(UserEmbedding(user_id=user_id, is_vector=vec))
+
+
+# ---------------------------------------------------------------------------
 # Profile CRUD
 # ---------------------------------------------------------------------------
 
@@ -193,6 +257,11 @@ def create_profile(db: Session, user_id: UUID, payload: ProfileCreate) -> Profil
             ])
 
         db.commit()
+
+        # Build and persist the 11-dim IS vector (single extra commit)
+        _upsert_user_embedding(db, user_id)
+        db.commit()
+
         return _to_response(_load_profile_for_user(db, user_id))
     except Exception:
         db.rollback()
@@ -249,6 +318,12 @@ def update_profile(db: Session, user_id: UUID, payload: ProfileUpdate) -> Profil
             db.add(Profile_Interest(profile_id=profile.id, interest_id=i_id))
 
     db.commit()
+
+    # Rebuild vector if any embedding-relevant field was updated
+    if _EMBEDDING_FIELDS & set(data.keys()):
+        _upsert_user_embedding(db, user_id)
+        db.commit()
+
     return _to_response(_load_profile_for_user(db, user_id))
 
 

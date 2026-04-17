@@ -37,6 +37,10 @@ class UserCreate(BaseModel):
     country_code: str
 
 
+class FcmTokenUpdate(BaseModel):
+    fcm_token: str
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID

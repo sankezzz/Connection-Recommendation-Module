@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, Numeric, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.dialects.postgresql import UUID as PGUUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database.base import Base
@@ -20,6 +20,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     fcm_token: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    access_token: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("country_code", "phone_number", name="uq_phone"),
@@ -150,3 +151,21 @@ class Profile_Document(Base):
     verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     profile: Mapped["Profile"] = relationship("Profile", back_populates="documents")
+
+
+# ---------------------------------------------------------------------------
+# User embeddings — 11-dim IS vector, rebuilt on profile create/update
+# Layout: [3 commodity | 3 role | 3 geo | 2 qty]  (same as group_embeddings)
+# ---------------------------------------------------------------------------
+
+class UserEmbedding(Base):
+    __tablename__ = "user_embeddings"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+    )
+    # JSON-serialised list[float] — 11 dimensions
+    is_vector: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
