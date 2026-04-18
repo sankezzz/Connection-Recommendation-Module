@@ -9,15 +9,34 @@ from app.modules.auth.router import router as auth_router
 from app.modules.profile.router import router as profile_router
 from app.modules.groups.router import router as groups_router
 from app.modules.post.router import router as post_router
+from app.modules.post.post_recommendation_module.router import router as post_rec_router
+from app.modules.post.post_recommendation_module import jobs as post_rec_jobs
 from app.modules.connections.router import (
     connections_router,
     recommendations_router,
 )
 from app.modules.news.router import router as news_router
 from app.modules.news.tasks import ingest, recalc_trending, update_taste, archive_old
+from app.core.database.session import SessionLocal
 
 
 scheduler = BackgroundScheduler(timezone="Asia/Kolkata")
+
+
+def _run_expiry_job():
+    db = SessionLocal()
+    try:
+        post_rec_jobs.run_expiry_job(db)
+    finally:
+        db.close()
+
+
+def _run_popular_sync():
+    db = SessionLocal()
+    try:
+        post_rec_jobs.run_popular_posts_sync(db)
+    finally:
+        db.close()
 
 
 @asynccontextmanager
@@ -27,6 +46,10 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(recalc_trending, "interval", minutes=5,   id="news.trending")
     scheduler.add_job(update_taste,    "interval", hours=1,     id="news.taste")
     scheduler.add_job(archive_old,     "cron",     hour=2,      id="news.archive")
+
+    # ── Post recommendation background tasks ─────────────────────────────────
+    scheduler.add_job(_run_expiry_job,   "interval", hours=1,    id="posts.expiry")
+    scheduler.add_job(_run_popular_sync, "interval", minutes=15, id="posts.popular")
 
     scheduler.start()
 
@@ -51,6 +74,7 @@ app.include_router(groups_router)
 
 # Posts module
 app.include_router(post_router)
+app.include_router(post_rec_router)
 
 # Connections module
 app.include_router(connections_router)

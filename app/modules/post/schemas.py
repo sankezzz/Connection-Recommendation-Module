@@ -32,7 +32,8 @@ class PostCreate(BaseModel):
 
     # --- Deal / Requirement fields (required when category_id == 4) ----------
     grain_type_size: Optional[str] = None
-    commodity_quantity: Optional[float] = None
+    commodity_quantity_min: Optional[float] = None
+    commodity_quantity_max: Optional[float] = None
     price_type: Optional[str] = None
 
     # --- Other category (required when category_id == 5) --------------------
@@ -58,7 +59,8 @@ class PostCreate(BaseModel):
             missing = [
                 f for f, v in [
                     ("grain_type_size", self.grain_type_size),
-                    ("commodity_quantity", self.commodity_quantity),
+                    ("commodity_quantity_min", self.commodity_quantity_min),
+                    ("commodity_quantity_max", self.commodity_quantity_max),
                     ("price_type", self.price_type),
                 ]
                 if not v
@@ -87,7 +89,8 @@ class PostUpdate(BaseModel):
     target_roles: Optional[List[int]] = None
     allow_comments: Optional[bool] = None
     grain_type_size: Optional[str] = None
-    commodity_quantity: Optional[float] = None
+    commodity_quantity_min: Optional[float] = None
+    commodity_quantity_max: Optional[float] = None
     price_type: Optional[str] = None
     other_description: Optional[str] = None
 
@@ -123,7 +126,8 @@ class PostResponse(BaseModel):
 
     # Deal / Requirement
     grain_type_size: Optional[str]
-    commodity_quantity: Optional[float]
+    commodity_quantity_min: Optional[float]
+    commodity_quantity_max: Optional[float]
     price_type: Optional[str]
 
     # Other

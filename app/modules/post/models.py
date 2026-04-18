@@ -51,7 +51,8 @@ class Post(Base):
 
     # Deal / Requirement fields (only used when category_id == CATEGORY_DEAL)
     grain_type_size: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    commodity_quantity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    commodity_quantity_min: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    commodity_quantity_max: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     price_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # 'fixed' | 'negotiable'
 
     # Other category (only used when category_id == CATEGORY_OTHER)
@@ -62,6 +63,7 @@ class Post(Base):
     view_count: Mapped[int] = mapped_column(Integer, default=0)
     comment_count: Mapped[int] = mapped_column(Integer, default=0)
     share_count: Mapped[int] = mapped_column(Integer, default=0)
+    save_count: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 

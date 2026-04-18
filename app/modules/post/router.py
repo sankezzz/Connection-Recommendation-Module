@@ -45,6 +45,17 @@ def get_my_posts_api(
     return ok(result, "Posts fetched successfully")
 
 
+@router.get("/following")
+def get_following_feed_api(
+    profile_id: int = Query(..., description="Your profile ID"),
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    result = service.get_following_feed(db, profile_id, limit, offset)
+    return ok(result, "Following feed fetched successfully")
+
+
 @router.get("/saved")
 def get_saved_posts_api(
     profile_id: int = Query(..., description="Your profile ID"),

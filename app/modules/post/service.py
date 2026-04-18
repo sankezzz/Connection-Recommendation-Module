@@ -1,13 +1,17 @@
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
+from datetime import datetime, timezone, timedelta
+
 from app.modules.post.models import Post, PostView, PostLike, PostComment, PostShare, PostSave
 from app.modules.profile.models import Profile
+from app.modules.connections.models import UserConnection
 from app.modules.post.schemas import (
     PostCreate, PostUpdate, PostResponse,
     CommentCreate, CommentResponse,
     LikeResponse, SaveResponse, ShareResponse,
 )
+from app.modules.post.post_recommendation_module import service as rec_service
 
 
 class PostNotFoundError(Exception):
@@ -60,7 +64,8 @@ def _to_post_response(db: Session, post: Post, viewer_profile_id: int) -> PostRe
         target_roles=post.target_roles,
         allow_comments=post.allow_comments,
         grain_type_size=post.grain_type_size,
-        commodity_quantity=post.commodity_quantity,
+        commodity_quantity_min=post.commodity_quantity_min,
+        commodity_quantity_max=post.commodity_quantity_max,
         price_type=post.price_type,
         other_description=post.other_description,
         created_at=post.created_at,
@@ -87,6 +92,13 @@ def _get_post_or_raise(db: Session, post_id: int) -> Post:
     return post
 
 
+def _profile_location(db: Session, profile_id: int) -> tuple[float, float]:
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        return 0.0, 0.0
+    return float(profile.latitude), float(profile.longitude)
+
+
 # ----------------------------------------------------------------------------
 # Post CRUD
 # ----------------------------------------------------------------------------
@@ -102,13 +114,31 @@ def create_post(db: Session, profile_id: int, payload: PostCreate) -> PostRespon
         target_roles=payload.target_roles,
         allow_comments=payload.allow_comments,
         grain_type_size=payload.grain_type_size,
-        commodity_quantity=payload.commodity_quantity,
+        commodity_quantity_min=payload.commodity_quantity_min,
+        commodity_quantity_max=payload.commodity_quantity_max,
         price_type=payload.price_type,
         other_description=payload.other_description,
     )
     db.add(post)
     db.commit()
     db.refresh(post)
+
+    lat, lon = _profile_location(db, profile_id)
+    try:
+        rec_service.index_post(
+            db=db,
+            post_id=post.id,
+            commodity_id=post.commodity_id,
+            target_role_ids=post.target_roles,
+            lat=lat,
+            lon=lon,
+            category_id=post.category_id,
+            qty_min_mt=float(post.commodity_quantity_min) if post.commodity_quantity_min is not None else None,
+            qty_max_mt=float(post.commodity_quantity_max) if post.commodity_quantity_max is not None else None,
+        )
+    except Exception:
+        pass  # embedding failure must never break post creation
+
     return _to_post_response(db, post, profile_id)
 
 
@@ -136,6 +166,12 @@ def delete_post(db: Session, post_id: int, profile_id: int) -> None:
     post = _get_post_or_raise(db, post_id)
     if post.profile_id != profile_id:
         raise PostForbiddenError("You can only delete your own posts")
+
+    try:
+        rec_service.remove_post_index(db, post_id)
+    except Exception:
+        pass
+
     db.delete(post)
     db.commit()
 
@@ -211,6 +247,10 @@ def toggle_like(db: Session, post_id: int, profile_id: int) -> LikeResponse:
         )
         db.commit()
         db.refresh(post)
+        try:
+            rec_service.record_interaction(db, profile_id, post.category_id)
+        except Exception:
+            pass
         return LikeResponse(liked=True, like_count=post.like_count)
 
 
@@ -232,6 +272,12 @@ def add_comment(db: Session, post_id: int, profile_id: int, payload: CommentCrea
     )
     db.commit()
     db.refresh(comment)
+
+    try:
+        rec_service.record_interaction(db, profile_id, post.category_id)
+    except Exception:
+        pass
+
     return CommentResponse(
         id=comment.id,
         post_id=comment.post_id,
@@ -303,7 +349,7 @@ def record_share(db: Session, post_id: int, profile_id: int) -> ShareResponse:
 # ----------------------------------------------------------------------------
 
 def toggle_save(db: Session, post_id: int, profile_id: int) -> SaveResponse:
-    _get_post_or_raise(db, post_id)
+    post = _get_post_or_raise(db, post_id)
 
     existing = db.query(PostSave).filter(
         PostSave.post_id == post_id,
@@ -312,12 +358,62 @@ def toggle_save(db: Session, post_id: int, profile_id: int) -> SaveResponse:
 
     if existing:
         db.delete(existing)
+        db.query(Post).filter(Post.id == post_id).update(
+            {Post.save_count: Post.save_count - 1},
+            synchronize_session=False,
+        )
         db.commit()
         return SaveResponse(saved=False)
     else:
         db.add(PostSave(post_id=post_id, profile_id=profile_id))
+        db.query(Post).filter(Post.id == post_id).update(
+            {Post.save_count: Post.save_count + 1},
+            synchronize_session=False,
+        )
         db.commit()
+        try:
+            rec_service.record_interaction(db, profile_id, post.category_id)
+        except Exception:
+            pass
         return SaveResponse(saved=True)
+
+
+def get_following_feed(db: Session, profile_id: int, limit: int = 20, offset: int = 0) -> list[PostResponse]:
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        return []
+
+    following_user_ids = [
+        row[0]
+        for row in db.query(UserConnection.following_id)
+        .filter(UserConnection.follower_id == profile.users_id)
+        .all()
+    ]
+    if not following_user_ids:
+        return []
+
+    followed_profile_ids = [
+        row[0]
+        for row in db.query(Profile.id)
+        .filter(Profile.users_id.in_(following_user_ids))
+        .all()
+    ]
+    if not followed_profile_ids:
+        return []
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    posts = (
+        db.query(Post)
+        .filter(
+            Post.profile_id.in_(followed_profile_ids),
+            Post.created_at >= cutoff,
+        )
+        .order_by(Post.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+    return [_to_post_response(db, post, profile_id) for post in posts]
 
 
 def get_saved_posts(db: Session, profile_id: int, limit: int = 20, offset: int = 0) -> list[PostResponse]:
