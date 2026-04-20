@@ -8,11 +8,11 @@
 
 ## How Auth Works
 
-Onboarding uses a short-lived **onboarding token** to carry your phone identity through the registration steps. Once the profile is created, **no token is needed for any API** — you identify yourself by passing your `user_id` directly in the URL or as a query parameter.
+OTP is sent **directly from the mobile app** via the Firebase Auth SDK — the backend is never involved in sending SMS. After the user enters the OTP, Firebase gives the app an **ID token**. The app sends that token to the backend, which verifies it and returns either an `onboarding_token` (new user) or the `user_id` (returning user).
 
 | Token | Used for | How to get it |
 |---|---|---|
-| `onboarding_token` | `POST /profile/user` and `POST /profile/` only | Returned by `POST /auth/verify-otp` — **new users only** |
+| `onboarding_token` | `POST /profile/user` and `POST /profile/` only | Returned by `POST /auth/firebase-verify` — **new users only** |
 
 The onboarding token goes in the `Authorization` header during registration:
 ```
@@ -23,53 +23,53 @@ Authorization: Bearer <onboarding_token>
 
 ---
 
-## Step 1 — Send OTP
+## Step 1 — Send OTP (Client-side — Firebase SDK)
+
+**No backend call needed.** The mobile app calls Firebase Auth directly:
 
 ```
-POST /auth/send-otp
+// Flutter example
+await FirebaseAuth.instance.verifyPhoneNumber(
+  phoneNumber: '+919876543210',   // full E.164 format
+  verificationCompleted: ...,
+  verificationFailed: ...,
+  codeSent: (verificationId, _) { ... },
+  codeAutoRetrievalTimeout: ...,
+);
+```
+
+Firebase sends the SMS. When the user enters the OTP, confirm it:
+
+```
+// Flutter example
+final credential = PhoneAuthProvider.credential(
+  verificationId: verificationId,
+  smsCode: otpEnteredByUser,
+);
+final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+final idToken = await userCredential.user!.getIdToken();
+// → send idToken to POST /auth/firebase-verify
+```
+
+---
+
+## Step 2 — Verify with Backend
+
+```
+POST /auth/firebase-verify
 Content-Type: application/json
 ```
 
 **Request body:**
 ```json
 {
-    "phone_number": "9876543210",
-    "country_code": "+91"
+    "firebase_id_token": "<id token returned by Firebase SDK after OTP confirmation>"
 }
 ```
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `phone_number` | string | Yes | Digits only, no country prefix |
-| `country_code` | string | Yes | E.g. `"+91"` |
-
-**Success `200`:**
-```json
-{
-    "success": true,
-    "message": "OTP sent successfully"
-}
-```
-
-> In **dev mode** (`DEV_MODE=true`), no SMS is sent — the 6-digit OTP is printed to the server terminal.
-
----
-
-## Step 2 — Verify OTP
-
-```
-POST /auth/verify-otp
-Content-Type: application/json
-```
-
-**Request body:**
-```json
-{
-    "phone_number": "9876543210",
-    "country_code": "+91",
-    "otp_code": "482931"
-}
-```
+| `firebase_id_token` | string | Yes | ID token from `user.getIdToken()` after phone sign-in |
 
 **Success `200` — new user:**
 ```json
@@ -97,6 +97,11 @@ Content-Type: application/json
         "token_type": "bearer"
     }
 }
+```
+
+**Error `401`** — invalid or expired Firebase token:
+```json
+{ "detail": "Invalid Firebase token: ..." }
 ```
 
 **Frontend logic:**
@@ -267,17 +272,19 @@ Content-Type: application/json
 ```
 NEW USER
 ────────
-POST /auth/send-otp                                     → OTP sent to phone
-POST /auth/verify-otp                                   → { is_new_user: true, onboarding_token }
-POST /profile/user          ← onboarding_token          → user row created  ← SAVE this UUID
-POST /profile/              ← onboarding_token          → profile created
-PATCH /profile/user/fcm-token?user_id=<uuid>            → device registered for push
+[Client]  FirebaseAuth.verifyPhoneNumber(+91XXXXXXXXXX)   → Firebase sends SMS
+[Client]  User enters OTP → signInWithCredential()         → get idToken
+POST /auth/firebase-verify  { firebase_id_token }          → { is_new_user: true, onboarding_token }
+POST /profile/user          ← onboarding_token             → user row created  ← SAVE this UUID
+POST /profile/              ← onboarding_token             → profile created
+PATCH /profile/user/fcm-token?user_id=<uuid>               → device registered for push
 
 RETURNING USER
 ──────────────
-POST /auth/send-otp                                     → OTP sent to phone
-POST /auth/verify-otp                                   → { is_new_user: false, user_id: "<uuid>" }
-                                                           ↑ skip all steps — save user_id to local storage
+[Client]  FirebaseAuth.verifyPhoneNumber(+91XXXXXXXXXX)   → Firebase sends SMS
+[Client]  User enters OTP → signInWithCredential()         → get idToken
+POST /auth/firebase-verify  { firebase_id_token }          → { is_new_user: false, user_id: "<uuid>" }
+                                                              ↑ skip all steps — save user_id to local storage
 ```
 
 ---
@@ -286,8 +293,8 @@ POST /auth/verify-otp                                   → { is_new_user: false
 
 | Method | Endpoint | Token Required | What it does |
 |---|---|---|---|
-| `POST` | `/auth/send-otp` | None | Request OTP via SMS |
-| `POST` | `/auth/verify-otp` | None | Verify OTP → onboarding_token (new) or user_id (returning) |
+| *(client SDK)* | Firebase `verifyPhoneNumber` | None | Firebase sends OTP SMS directly |
+| `POST` | `/auth/firebase-verify` | None | Verify Firebase ID token → onboarding_token (new) or user_id (returning) |
 | `POST` | `/profile/user` | `onboarding_token` | Create user row — returns `user_id` UUID |
 | `POST` | `/profile/` | `onboarding_token` | Create profile |
 | `PATCH` | `/profile/user/fcm-token?user_id=` | None | Register device for push notifications |

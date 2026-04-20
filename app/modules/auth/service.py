@@ -1,82 +1,70 @@
-import random
-import string
-from datetime import datetime, timedelta, timezone
+import json
+import os
+from pathlib import Path
 from uuid import uuid4
 
-import httpx
+import firebase_admin
+from firebase_admin import auth as firebase_auth, credentials
 
-from app.core.config import settings
 from app.core.security.jwt_handler import create_onboarding_token
 
-MSG91_BASE = "https://control.msg91.com/api/v5/otp"
+# ---------------------------------------------------------------------------
+# Firebase Admin SDK initialisation (reuse if already initialised)
+# ---------------------------------------------------------------------------
 
-# Dev-mode in-memory store: "country_code:phone" -> (otp, expires_at)
-_dev_otp_store: dict[str, tuple[str, datetime]] = {}
-_DEV_OTP_EXPIRE_MINUTES = 10
+def _get_firebase_app() -> firebase_admin.App:
+    try:
+        return firebase_admin.get_app()
+    except ValueError:
+        pass  # not yet initialised
 
-
-def _mobile(country_code: str, phone_number: str) -> str:
-    return f"{country_code.lstrip('+')}{phone_number}"
-
-
-def _phone_key(country_code: str, phone_number: str) -> str:
-    return f"{country_code}:{phone_number}"
-
-
-def send_otp(phone_number: str, country_code: str) -> None:
-    if settings.DEV_MODE:
-        otp = "".join(random.choices(string.digits, k=6))
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=_DEV_OTP_EXPIRE_MINUTES)
-        _dev_otp_store[_phone_key(country_code, phone_number)] = (otp, expires_at)
-        print(f"\n[DEV] OTP for {country_code} {phone_number}: {otp}\n")
-        return
-
-    params: dict = {
-        "authkey": settings.MSG91_AUTH_KEY,
-        "mobile": _mobile(country_code, phone_number),
-    }
-    if settings.MSG91_TEMPLATE_ID:
-        params["template_id"] = settings.MSG91_TEMPLATE_ID
-
-    resp = httpx.post(
-        MSG91_BASE,
-        params=params,
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if data.get("type") != "success":
-        raise RuntimeError(f"MSG91 error: {data.get('message', 'unknown error')}")
-
-
-def verify_otp(phone_number: str, country_code: str, otp_code: str) -> None:
-    """Validate OTP. Raises ValueError on failure. Does NOT issue any token."""
-    if settings.DEV_MODE:
-        key = _phone_key(country_code, phone_number)
-        entry = _dev_otp_store.get(key)
-        if not entry:
-            raise ValueError("No OTP found for this number — request a new one.")
-        stored_otp, expires_at = entry
-        if datetime.now(timezone.utc) > expires_at:
-            del _dev_otp_store[key]
-            raise ValueError("OTP has expired — request a new one.")
-        if otp_code != stored_otp:
-            raise ValueError("Invalid OTP.")
-        del _dev_otp_store[key]
+    # Production: service account JSON provided as env var string
+    sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if sa_json:
+        cred = credentials.Certificate(json.loads(sa_json))
     else:
-        resp = httpx.get(
-            f"{MSG91_BASE}/verify",
-            params={
-                "authkey": settings.MSG91_AUTH_KEY,
-                "mobile": _mobile(country_code, phone_number),
-                "otp": otp_code,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("type") != "success":
-            raise ValueError(data.get("message", "OTP verification failed"))
+        # Development: load from service.json next to this repo
+        service_json_path = Path(__file__).resolve().parents[4] / "backend" / "service.json"
+        cred = credentials.Certificate(str(service_json_path))
+
+    return firebase_admin.initialize_app(cred)
+
+
+_firebase_app = _get_firebase_app()
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def verify_firebase_token(firebase_id_token: str) -> tuple[str, str]:
+    """
+    Verify a Firebase ID token issued after phone OTP verification.
+
+    Returns (phone_number, country_code) extracted from the token.
+    Raises ValueError on invalid / expired tokens.
+    """
+    try:
+        decoded = firebase_auth.verify_id_token(firebase_id_token, app=_firebase_app)
+    except Exception as exc:
+        raise ValueError(f"Invalid Firebase token: {exc}") from exc
+
+    phone = decoded.get("phone_number")
+    if not phone:
+        raise ValueError("Token does not contain a phone number — wrong sign-in method?")
+
+    # Firebase stores phone as E.164: +919876543210
+    # Split into country_code (+91) and phone_number (9876543210)
+    if phone.startswith("+91"):
+        country_code = "+91"
+        phone_number = phone[3:]
+    else:
+        # Generic split: first 2–3 chars are the country code
+        # For non-Indian numbers the frontend should send the split explicitly if needed
+        country_code = phone[:3] if phone[2].isdigit() and phone[3:4].isdigit() else phone[:3]
+        phone_number = phone[len(country_code):]
+
+    return phone_number, country_code
 
 
 def issue_onboarding_token(phone_number: str, country_code: str) -> str:

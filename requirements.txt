@@ -15,4 +15,5 @@ httpx
 apscheduler
 google-genai
 google-auth
+firebase-admin
 redis

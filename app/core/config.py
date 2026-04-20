@@ -8,10 +8,11 @@ class Settings(BaseSettings):
     SYNC_DATABASE_URL: str
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # Auth
-    DEV_MODE: bool = True
-    MSG91_AUTH_KEY: Optional[str] = None
-    MSG91_TEMPLATE_ID: Optional[str] = None
+    # Auth — Firebase Phone Auth (OTP sent client-side, backend only verifies ID token)
+    GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = None  # set in production; dev falls back to service.json
+
+    # Gemini
+    GEMINI_API_KEY: Optional[str] = None
 
     class Config:
         env_file = ".env"

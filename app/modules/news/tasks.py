@@ -22,8 +22,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from math import log1p
 
-import google.auth  # used in _get_client via google.auth.default()
+import google.auth
 from google import genai
+from google.oauth2.service_account import Credentials
 from sqlalchemy.orm import Session
 import requests
 
@@ -50,12 +51,14 @@ from app.modules.news.weights_config import (
 
 log = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_MODEL = "gemini-2.5-flash-lite-preview-06-17"
+GEMINI_PROJECT = "vanijyaa-493705"
+GEMINI_LOCATION = "us-central1"
 GEMINI_SA_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
     "service.json",
 )
-GEMINI_SCOPES = ["https://www.googleapis.com/auth/generative-language"]
+GEMINI_SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 
 _gemini_client: genai.Client | None = None
 
@@ -65,16 +68,19 @@ def _get_client() -> genai.Client:
     if _gemini_client is None:
         sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
         if sa_json:
-            # Render / production: credentials stored as env var
-            from google.oauth2.service_account import Credentials
             creds = Credentials.from_service_account_info(
                 json.loads(sa_json), scopes=GEMINI_SCOPES
             )
         else:
-            # Local dev: fall back to service.json file
-            os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", GEMINI_SA_PATH)
-            creds, _ = google.auth.default(scopes=GEMINI_SCOPES)
-        _gemini_client = genai.Client(credentials=creds)
+            creds = Credentials.from_service_account_file(
+                GEMINI_SA_PATH, scopes=GEMINI_SCOPES
+            )
+        _gemini_client = genai.Client(
+            vertexai=True,
+            project=GEMINI_PROJECT,
+            location=GEMINI_LOCATION,
+            credentials=creds,
+        )
     return _gemini_client
 
 GEMINI_SYSTEM_PROMPT = """
@@ -243,6 +249,7 @@ def ingest() -> dict:
                 new_count += 1
 
         db.commit()
+        print(f"[ingest] Done — {new_count} articles added, {skipped} skipped (already in DB)")
         log.info("ingest: new=%d skipped=%d", new_count, skipped)
         return {"new": new_count, "skipped": skipped}
     except Exception:
