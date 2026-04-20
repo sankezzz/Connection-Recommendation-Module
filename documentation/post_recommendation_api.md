@@ -11,7 +11,7 @@
 }
 ```
 
-> **Auth note:** The recommendation feed endpoint requires a `user_id` (UUID) resolved from the JWT. The two job-trigger endpoints are unauthenticated and intended for internal/admin use only.
+> **Auth note:** All endpoints use `profile_id` as a query parameter — no JWT required. This matches the rest of the posts module. The `profile_id` is the integer returned after profile creation.
 
 ---
 
@@ -92,21 +92,17 @@ Each item in the feed response contains only the **post ID and its score**. The 
 
 ## 1. Get Recommended Feed
 
-**`GET /posts/recommendation/feed`**
+**`GET /posts/recommendation/feed?profile_id={profile_id}`**
 
-Returns up to 25 personalised post recommendations for the authenticated user. The response contains only `post_id` + `score` — no post content is hydrated here.
+Returns up to 25 personalised post recommendations for the given profile. The response contains only `post_id` + `score` — no post content is hydrated here.
 
 > **Seen deduplication:** Post IDs returned are recorded in `seen_posts`. The same post will not be served again for 30 days. Call with different profiles to get independent feeds.
 
-### Headers
-
-| Header | Value | Required |
-|--------|-------|----------|
-| `Authorization` | `Bearer <JWT>` | Yes |
-
 ### Query Parameters
 
-None.
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `profile_id` | int | Yes | Your profile ID (integer, not user UUID) |
 
 ### Response — `200 OK`
 
@@ -140,8 +136,8 @@ None.
 
 | Status | Reason |
 |--------|--------|
-| `401` | Missing or invalid JWT |
-| `404` | No profile found for this user — complete onboarding first |
+| `404` | No profile found for this `profile_id` |
+| `422` | `profile_id` query param missing or not an integer |
 
 ---
 
@@ -234,8 +230,8 @@ All errors follow this shape:
 | HTTP Status | Meaning | When it happens |
 |-------------|---------|-----------------|
 | `200` | OK | Feed or job result returned |
-| `401` | Unauthorized | JWT missing or invalid |
-| `404` | Not Found | User has no profile (onboarding not complete) |
+| `404` | Not Found | No profile found for the given `profile_id` |
+| `422` | Unprocessable Entity | `profile_id` missing or not an integer |
 | `500` | Server Error | Unexpected failure — check server logs |
 
 ---
@@ -319,7 +315,7 @@ Running recommendation test for 2 profile(s)…
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `GET` | `/posts/recommendation/feed` | JWT required | Get personalised feed (up to 25 posts) |
+| `GET` | `/posts/recommendation/feed` | Query param | Get personalised feed (up to 25 posts) |
 | `POST` | `/posts/recommendation/jobs/expiry` | None | Run expiry + partition migration job |
 | `POST` | `/posts/recommendation/jobs/popular-sync` | None | Run popular-posts velocity sync |
 

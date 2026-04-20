@@ -5,33 +5,21 @@ GET  /posts/recommendation/feed
 POST /posts/recommendation/jobs/expiry
 POST /posts/recommendation/jobs/popular-sync
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.dependencies import get_db, get_current_user_id
+from app.dependencies import get_db
 from app.modules.post.post_recommendation_module import service, jobs
 from app.modules.post.post_recommendation_module.schemas import JobResult, RecommendedPost
-from app.modules.profile.models import Profile
 
 router = APIRouter(prefix="/posts/recommendation", tags=["post-recommendation"])
 
 
-def _profile_id_for(user_id, db: Session) -> int:
-    profile = db.query(Profile).filter(Profile.users_id == user_id).first()
-    if not profile:
-        raise HTTPException(
-            status_code=404,
-            detail="Profile not found – complete onboarding first",
-        )
-    return profile.id
-
-
 @router.get("/feed", response_model=list[RecommendedPost])
 def get_feed(
+    profile_id: int = Query(..., description="Your profile ID"),
     db: Session = Depends(get_db),
-    user_id=Depends(get_current_user_id),
 ):
-    profile_id = _profile_id_for(user_id, db)
     try:
         results = service.get_recommended_posts(db, profile_id)
     except ValueError as exc:
