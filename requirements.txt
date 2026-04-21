@@ -17,3 +17,4 @@ google-genai
 google-auth
 firebase-admin
 redis
+websocket-client

@@ -38,6 +38,12 @@ from app.modules.news.models import (  # noqa: F401
     UserClusterTaste,
     NewsTrending,
 )
+from app.modules.chat.data.models import (  # noqa: F401
+    Conversation,
+    ConversationMember,
+    Message,
+    ChatAttachment,
+)
 
 from app.core.config import settings
 
