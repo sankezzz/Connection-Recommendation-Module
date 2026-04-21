@@ -187,7 +187,9 @@ def create_profile(db: Session, user_id: UUID, payload: ProfileCreate) -> Profil
             ])
 
         db.commit()
-        return _to_response(_load_profile_for_user(db, user_id))
+        profile = _load_profile_for_user(db, user_id)
+        assert profile is not None
+        return _to_response(profile)
     except Exception:
         db.rollback()
         raise
@@ -243,7 +245,9 @@ def update_profile(db: Session, user_id: UUID, payload: ProfileUpdate) -> Profil
             db.add(Profile_Interest(profile_id=profile.id, interest_id=i_id))
 
     db.commit()
-    return _to_response(_load_profile_for_user(db, user_id))
+    profile = _load_profile_for_user(db, user_id)
+    assert profile is not None
+    return _to_response(profile)
 
 
 def delete_profile(db: Session, user_id: UUID) -> None:
