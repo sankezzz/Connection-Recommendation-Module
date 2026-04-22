@@ -3,13 +3,17 @@ from datetime import datetime, timezone
 from typing import Iterable
 from uuid import UUID
 
+import httpx
 from fastapi import UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-_AVATAR_DIR = os.path.join(os.getcwd(), "uploads", "avatars")
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+_SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
+_SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "avatars")
 
 from app.modules.profile.models import (
     Commodity,
@@ -442,15 +446,24 @@ async def update_avatar(db: Session, user_id: UUID, avatar: UploadFile) -> dict:
     if ext not in _ALLOWED_EXTENSIONS:
         ext = ".jpg"
 
-    os.makedirs(_AVATAR_DIR, exist_ok=True)
-    filename = f"{user_id}{ext}"
-    filepath = os.path.join(_AVATAR_DIR, filename)
-
+    storage_path = f"{user_id}{ext}"
     content = await avatar.read()
-    with open(filepath, "wb") as f:
-        f.write(content)
 
-    avatar_url = f"/uploads/avatars/{filename}"
+    upload_url = f"{_SUPABASE_URL}/storage/v1/object/{_STORAGE_BUCKET}/{storage_path}"
+    headers = {
+        "Authorization": f"Bearer {_SUPABASE_SERVICE_KEY}",
+        "Content-Type": avatar.content_type,
+        "x-upsert": "true",
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.put(upload_url, content=content, headers=headers)
+
+    if resp.status_code not in (200, 201):
+        raise ProfileValidationError(f"Storage upload failed: {resp.text}")
+
+    avatar_url = f"{_SUPABASE_URL}/storage/v1/object/public/{_STORAGE_BUCKET}/{storage_path}"
+
     profile.avatar_url = avatar_url
     db.commit()
     return {"avatar_url": avatar_url}
