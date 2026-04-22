@@ -6,3 +6,7 @@ py -m  uvicorn main:app --reload
 HOSTING LOCALLY:
 uvicorn main:app --host 0.0.0.0 --port 8000
 .\cloudflared.exe tunnel --url http://localhost:8000
+
+
+cd "c:\Users\Admin\OneDrive\Desktop\vanijyaa-backend\backend" && alembic upgrade head 2>&1
+

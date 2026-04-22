@@ -17,6 +17,7 @@ from app.modules.profile.service import (
     get_my_profile,
     get_profile_by_id,
     delete_profile,
+    delete_user,
     update_profile,
     update_avatar,
     update_fcm_token,
@@ -152,6 +153,18 @@ def update_profile_api(
         raise HTTPException(status_code=404, detail=str(e))
     except ProfileValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/user")
+def delete_user_api(
+    user_id: UUID = Query(..., description="Acting user's UUID"),
+    db: Session = Depends(get_db),
+):
+    try:
+        delete_user(db, user_id)
+        return ok(message="User and all associated data deleted successfully")
+    except ProfileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.delete("/")

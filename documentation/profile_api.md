@@ -2,7 +2,7 @@
 
 A complete reference for the onboarding flow, profile creation, and profile management APIs.
 
-Base URL (local): `https://vanijyaa-backend.onrender.com`
+Base URL (production): `https://vanijyaa-backend.onrender.com`
 
 ---
 
@@ -30,6 +30,15 @@ uvicorn main:app --reload
 Server runs at `http://localhost:8000`.
 Swagger UI at `http://localhost:8000/docs` — use this to test all endpoints interactively.
 
+**Required env vars (add to `.env` and Render):**
+```
+DATABASE_URL=postgresql+asyncpg://...
+SYNC_DATABASE_URL=postgresql+psycopg2://...
+DATABASE_SERVICE_KEY=<supabase service role key>
+DATABASE_STORAGE_URL=https://<project-ref>.supabase.co   ← required for avatar uploads
+DATABASE_STORAGE_BUCKET=avatars
+```
+
 ---
 
 ## 2. How Auth Works
@@ -39,7 +48,7 @@ The profile module uses **two different auth mechanisms** depending on the stage
 | Stage | Endpoints | Auth mechanism |
 |---|---|---|
 | **Onboarding (new users)** | `POST /profile/user` and `POST /profile/` | `Authorization: Bearer <onboarding_token>` |
-| **Post-registration** | `GET /me`, `PATCH /`, `DELETE /`, `GET /{id}` | Query parameter `?user_id=<uuid>` — no token |
+| **Post-registration** | All other endpoints | Query parameter `?user_id=<uuid>` — no token |
 
 ### Onboarding token
 - Issued by `POST /auth/firebase-verify` for new users
@@ -142,13 +151,13 @@ Authorization: Bearer <onboarding_token>
 
 | Method | Endpoint | Auth | What it does |
 |---|---|---|---|
-| `POST` | `/profile/user` | Bearer onboarding token | Create the user row (step 1) |
-| `POST` | `/profile/` | Bearer onboarding token | Create profile (step 2) |
-| `GET` | `/profile/me` | `?user_id=<uuid>` | Fetch your own profile |
+| `POST` | `/profile/user` | Bearer onboarding token | Create user row — or reactivate soft-deleted account |
+| `POST` | `/profile/` | Bearer onboarding token | Create profile (step 2 of onboarding) |
+| `GET` | `/profile/me` | `?user_id=<uuid>` | Fetch your own full profile |
 | `PATCH` | `/profile/` | `?user_id=<uuid>` | Update your profile |
-| `DELETE` | `/profile/` | `?user_id=<uuid>` | Delete your profile |
-| `GET` | `/profile/my-posts` | `?user_id=<uuid>` | My posts (paginated) |
-| `GET` | `/profile/saved` | `?user_id=<uuid>` | My saved posts (paginated) |
+| `PATCH` | `/profile/avatar` | `?user_id=<uuid>` | Upload / replace profile avatar |
+| `DELETE` | `/profile/` | `?user_id=<uuid>` | Hard delete profile row only |
+| `DELETE` | `/profile/user` | `?user_id=<uuid>` | Soft delete entire account (reversible) |
 | `GET` | `/profile/{profile_id}` | None (public) | Public view of any profile |
 
 ---
@@ -163,6 +172,8 @@ Step 2: POST /profile/        ← creates Profile + commodities + interests
 ```
 
 Both steps must use the **same onboarding token** issued in Section 4.
+
+> **Re-registration (soft-deleted accounts):** If a user previously deleted their account and registers again with the same phone number, Step 1 automatically reactivates their account and wipes their old profile data so they can start fresh.
 
 ---
 
@@ -193,7 +204,7 @@ curl -X POST http://localhost:8000/profile/user \
 }
 ```
 
-**Error `409`** — user already exists:
+**Error `409`** — active account already exists:
 ```json
 { "detail": "Phone number already registered" }
 ```
@@ -217,6 +228,8 @@ Creates the profile. Call immediately after Step 1 with the same token.
     "quantity_min": 100,
     "quantity_max": 500,
     "business_name": "Ravi Agro Pvt Ltd",
+    "city": "Mumbai",
+    "state": "Maharashtra",
     "latitude": 19.076,
     "longitude": 72.877
 }
@@ -233,26 +246,10 @@ Creates the profile. Call immediately after Step 1 with the same token.
 | `quantity_min` | float | Yes | Minimum trade quantity in MT |
 | `quantity_max` | float | Yes | Must be ≥ `quantity_min` |
 | `business_name` | string | No | Optional business name |
+| `city` | string | No | City name e.g. `"Mumbai"` |
+| `state` | string | No | State name e.g. `"Maharashtra"` |
 | `latitude` | float | Yes | Business location latitude |
 | `longitude` | float | Yes | Business location longitude |
-
-**Example (curl):**
-```bash
-curl -X POST http://localhost:8000/profile/ \
-  -H "Authorization: Bearer <ONBOARDING_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Ravi Traders",
-    "role_id": 1,
-    "commodities": [1, 2],
-    "interests": [1, 2],
-    "quantity_min": 100,
-    "quantity_max": 500,
-    "business_name": "Ravi Agro Pvt Ltd",
-    "latitude": 19.076,
-    "longitude": 72.877
-  }'
-```
 
 **Success `200`:**
 ```json
@@ -260,24 +257,29 @@ curl -X POST http://localhost:8000/profile/ \
     "success": true,
     "message": "Profile created successfully",
     "data": {
-        "id": 1,
-        "name": "Ravi Traders",
-        "role_id": 1,
-        "commodities": [
-            { "id": 1, "name": "rice" },
-            { "id": 2, "name": "cotton" }
-        ],
-        "interests": [
-            { "id": 1, "name": "connections" },
-            { "id": 2, "name": "leads" }
-        ],
-        "is_verified": false,
-        "is_user_verified": false,
-        "is_business_verified": false,
-        "followers_count": 0,
-        "business_name": "Ravi Agro Pvt Ltd",
-        "latitude": 19.076,
-        "longitude": 72.877
+        "profile": {
+            "id": 1,
+            "name": "Ravi Traders",
+            "role_id": 1,
+            "commodities": [
+                { "id": 1, "name": "rice" },
+                { "id": 2, "name": "cotton" }
+            ],
+            "interests": [
+                { "id": 1, "name": "connections" },
+                { "id": 2, "name": "leads" }
+            ],
+            "is_verified": false,
+            "is_user_verified": false,
+            "is_business_verified": false,
+            "followers_count": 0,
+            "business_name": "Ravi Agro Pvt Ltd",
+            "city": "Mumbai",
+            "state": "Maharashtra",
+            "latitude": 19.076,
+            "longitude": 72.877,
+            "avatar_url": null
+        }
     }
 }
 ```
@@ -329,10 +331,43 @@ curl "http://localhost:8000/profile/me?user_id=c37a3257-dc3f-43be-9fb0-33cf918b1
         "is_business_verified": false,
         "followers_count": 0,
         "business_name": "Ravi Agro Pvt Ltd",
+        "city": "Mumbai",
+        "state": "Maharashtra",
         "latitude": 19.076,
-        "longitude": 72.877
+        "longitude": 72.877,
+        "avatar_url": "https://<project>.supabase.co/storage/v1/object/public/avatars/<user_id>.jpg"
     }
 }
+```
+
+---
+
+### `PATCH /profile/avatar`
+
+Upload or replace the profile avatar. Accepts `jpeg`, `png`, or `webp`.
+
+**Content-Type:** `multipart/form-data`
+
+**Example:**
+```bash
+curl -X PATCH "http://localhost:8000/profile/avatar?user_id=<USER_ID>" \
+  -F "avatar=@/path/to/photo.jpg"
+```
+
+**Success `200`:**
+```json
+{
+    "success": true,
+    "message": "Avatar updated successfully",
+    "data": {
+        "avatar_url": "https://<project>.supabase.co/storage/v1/object/public/avatars/<user_id>.jpg"
+    }
+}
+```
+
+**Error `400`** — unsupported file type:
+```json
+{ "detail": "Unsupported image type 'image/gif'. Allowed: jpeg, png, webp." }
 ```
 
 ---
@@ -350,20 +385,28 @@ Update your profile. All fields are optional — only send what you want to chan
     "quantity_min": 200,
     "quantity_max": 1000,
     "business_name": "Ravi Agro International",
+    "city": "Pune",
+    "state": "Maharashtra",
     "latitude": 18.520,
     "longitude": 73.856
 }
 ```
 
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | Display name |
+| `commodities` | int[] | Full replacement list |
+| `interests` | int[] | Full replacement list |
+| `quantity_min` | float | |
+| `quantity_max` | float | Must be ≥ `quantity_min` |
+| `business_name` | string | |
+| `city` | string | |
+| `state` | string | |
+| `latitude` | float | |
+| `longitude` | float | |
+
 **Commodity / interest update behaviour:**  
 Pass the complete new list. Items not in the list are removed. Items already present are kept. New items are added.
-
-**Example — update just the name:**
-```bash
-curl -X PATCH "http://localhost:8000/profile/?user_id=c37a3257-dc3f-43be-9fb0-33cf918b11ff" \
-  -H "Content-Type: application/json" \
-  -d '{ "name": "Ravi Global Traders" }'
-```
 
 **Success `200`:**
 ```json
@@ -376,9 +419,30 @@ curl -X PATCH "http://localhost:8000/profile/?user_id=c37a3257-dc3f-43be-9fb0-33
 
 ---
 
-### `DELETE /profile/`
+### `DELETE /profile/user` — Soft Delete Account
 
-Permanently delete your profile (hard delete — not reversible).
+Marks the user account as deleted (`is_deleted=true`, `deleted_at=now()`). The user row is **not removed** from the database — it can be reactivated if they re-register with the same phone number.
+
+```bash
+curl -X DELETE "http://localhost:8000/profile/user?user_id=c37a3257-dc3f-43be-9fb0-33cf918b11ff"
+```
+
+**Success `200`:**
+```json
+{
+    "success": true,
+    "message": "User and all associated data deleted successfully",
+    "data": null
+}
+```
+
+> **Re-registration after deletion:** If this user registers again with the same phone number, their account is reactivated and their old profile is wiped so they can fill in fresh data.
+
+---
+
+### `DELETE /profile/` — Delete Profile Only
+
+Hard deletes the profile row (commodities, interests, documents cascade). The `users` row remains intact.
 
 ```bash
 curl -X DELETE "http://localhost:8000/profile/?user_id=c37a3257-dc3f-43be-9fb0-33cf918b11ff"
@@ -398,8 +462,6 @@ curl -X DELETE "http://localhost:8000/profile/?user_id=c37a3257-dc3f-43be-9fb0-3
 ### `GET /profile/{profile_id}` — Public View
 
 View any user's public profile. **No auth required.**
-
-**URL parameter:**
 
 | Param | Type | Description |
 |---|---|---|
@@ -424,56 +486,44 @@ curl http://localhost:8000/profile/1
             { "id": 1, "name": "rice" }
         ],
         "business_name": "Ravi Agro Pvt Ltd",
+        "city": "Mumbai",
+        "state": "Maharashtra",
         "latitude": 19.076,
         "longitude": 72.877,
-        "posts_count": 0
+        "posts_count": 0,
+        "avatar_url": null
     }
 }
 ```
 
 ---
 
-### `GET /profile/my-posts`
-
-Fetch your own posts (paginated).
-
-**Query parameters:**
-
-| Param | Default | Description |
-|---|---|---|
-| `user_id` | required | Your user UUID |
-| `limit` | 20 | Max results to return |
-| `offset` | 0 | Skip N results (for pagination) |
-
-```bash
-curl "http://localhost:8000/profile/my-posts?user_id=c37a3257-dc3f-43be-9fb0-33cf918b11ff&limit=10&offset=0"
-```
-
----
-
-### `GET /profile/saved`
-
-Fetch your saved posts (paginated). Same query parameters as `my-posts`.
-
----
-
 ## 8. Database Schema
 
-Tables created by the migration (`alembic upgrade head`):
-
 ```
-users                  — auth identity (phone + country_code, fcm_token, access_token)
+users                  — auth identity (phone, country_code, fcm_token, access_token,
+                         is_active, is_deleted, deleted_at)
 roles                  — trader / broker / exporter
-profile                — main profile (linked 1:1 to user)
+profile                — main profile (city, state, latitude, longitude, avatar_url, ...)
 commodities            — rice / cotton / sugar / ...
-profile_commodities    — profile ↔ commodity (many-to-many)
+profile_commodities    — profile ↔ commodity (many-to-many, CASCADE on profile delete)
 interests              — connections / leads / news
-profile_interests      — profile ↔ interest (many-to-many)
-document_types         — GST, PAN, APEDA ...
-role_document_requirements — which docs each role needs
-profile_documents      — uploaded docs per profile (with verification status)
+profile_interests      — profile ↔ interest (many-to-many, CASCADE on profile delete)
+profile_documents      — uploaded docs per profile (CASCADE on profile delete)
 user_embeddings        — IS vector for matching (built on profile create/update)
-posts                  — stub table (post module coming soon)
+```
+
+**FK cascade chain on user delete:**
+```
+users (soft delete) — no hard cascade triggered by API
+users (hard delete via DB) → profile → profile_commodities
+                                     → profile_interests
+                                     → profile_documents
+                          → user_embeddings
+                          → news_engagement
+                          → user_cluster_taste
+                          → group_members
+                          → groups.created_by SET NULL
 ```
 
 Run migrations:
@@ -492,10 +542,10 @@ alembic current
 
 | Status | When it happens |
 |---|---|
-| `400` | Invalid IDs (role/commodity/interest not in DB), `quantity_min > quantity_max` |
+| `400` | Invalid IDs (role/commodity/interest not in DB), `quantity_min > quantity_max`, unsupported avatar type |
 | `401` | Missing, expired, or wrong token type (onboarding token required but not provided) |
 | `404` | User or profile not found |
-| `409` | User already registered, or profile already exists for this user |
+| `409` | Active account already registered with this phone number |
 | `422` | Missing required field or wrong data type (FastAPI validation) |
 
 All errors follow FastAPI's default shape:
@@ -537,6 +587,8 @@ curl -X POST http://localhost:8000/profile/ \
     "quantity_min": 100,
     "quantity_max": 500,
     "business_name": "Ravi Agro",
+    "city": "Mumbai",
+    "state": "Maharashtra",
     "latitude": 19.076,
     "longitude": 72.877
   }'
@@ -544,14 +596,18 @@ curl -X POST http://localhost:8000/profile/ \
 # 6. Fetch your profile (replace USER_ID with the UUID from step 4 response)
 curl "http://localhost:8000/profile/me?user_id=<USER_ID>"
 
-# 7. Update name only
+# 7. Upload avatar
+curl -X PATCH "http://localhost:8000/profile/avatar?user_id=<USER_ID>" \
+  -F "avatar=@/path/to/photo.jpg"
+
+# 8. Update name and city only
 curl -X PATCH "http://localhost:8000/profile/?user_id=<USER_ID>" \
   -H "Content-Type: application/json" \
-  -d '{ "name": "Ravi Global Traders" }'
+  -d '{ "name": "Ravi Global Traders", "city": "Pune" }'
 
-# 8. Public profile view (replace PROFILE_ID with the int id from step 6 response)
+# 9. Public profile view (replace PROFILE_ID with the int id from step 6 response)
 curl http://localhost:8000/profile/<PROFILE_ID>
 
-# 9. Delete
-curl -X DELETE "http://localhost:8000/profile/?user_id=<USER_ID>"
+# 10. Soft delete account
+curl -X DELETE "http://localhost:8000/profile/user?user_id=<USER_ID>"
 ```

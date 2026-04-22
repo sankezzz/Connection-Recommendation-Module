@@ -102,7 +102,7 @@ class NewsEngagement(Base):
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     article_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("news_articles.id"), nullable=False
@@ -142,7 +142,7 @@ class UserClusterTaste(Base):
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     user_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     cluster_id: Mapped[int] = mapped_column(Integer, nullable=False)
     taste_weight: Mapped[float] = mapped_column(Float, default=0.0)

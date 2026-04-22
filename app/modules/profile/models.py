@@ -18,6 +18,8 @@ class User(Base):
     country_code: Mapped[str] = mapped_column(String(5))
     phone_number: Mapped[str] = mapped_column(String(15))
     is_active: Mapped[bool] = mapped_column(default=True)
+    is_deleted: Mapped[bool] = mapped_column(default=False)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     fcm_token: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     access_token: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
@@ -26,7 +28,7 @@ class User(Base):
         UniqueConstraint("country_code", "phone_number", name="uq_phone"),
     )
 
-    profile: Mapped[Optional["Profile"]] = relationship("Profile", back_populates="user")
+    profile: Mapped[Optional["Profile"]] = relationship("Profile", back_populates="user", passive_deletes=True)
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +72,7 @@ class Profile(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    users_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"), unique=True)
+    users_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True)
     role_id: Mapped[int] = mapped_column(Integer, ForeignKey("roles.id"))
 
     name: Mapped[str] = mapped_column(String(100))
@@ -113,7 +115,7 @@ class Profile_Commodity(Base):
     __tablename__ = "profile_commodities"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("profile.id"))
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("profile.id", ondelete="CASCADE"))
     commodity_id: Mapped[int] = mapped_column(Integer, ForeignKey("commodities.id"))
 
     __table_args__ = (
@@ -128,7 +130,7 @@ class Profile_Interest(Base):
     __tablename__ = "profile_interests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("profile.id"))
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("profile.id", ondelete="CASCADE"))
     interest_id: Mapped[int] = mapped_column(Integer, ForeignKey("interests.id"))
 
     __table_args__ = (
@@ -147,7 +149,7 @@ class Profile_Document(Base):
     __tablename__ = "profile_documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("profile.id"))
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("profile.id", ondelete="CASCADE"))
     # pan_card | aadhaar_card | gst_certificate | trade_license
     document_type: Mapped[str] = mapped_column(String(30))
     document_number: Mapped[str] = mapped_column(String(100))
@@ -166,7 +168,7 @@ class UserEmbedding(Base):
     __tablename__ = "user_embeddings"
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     # JSON-serialised list[float] — 11 dimensions
     is_vector: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)

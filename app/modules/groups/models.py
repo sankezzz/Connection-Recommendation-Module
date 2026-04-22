@@ -41,8 +41,8 @@ class Group(Base):
     invite_link_token: Mapped[Optional[str]] = mapped_column(
         String(100), nullable=True, unique=True
     )
-    created_by: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id")
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     member_count: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
@@ -69,7 +69,7 @@ class GroupMember(Base):
         PGUUID(as_uuid=True), ForeignKey("groups.id"), primary_key=True
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     # admin | member
     role: Mapped[str] = mapped_column(String(20), default="member")
