@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
-_SUPABASE_URL = os.environ["DATABASE_URL"].rstrip("/")
+_SUPABASE_URL = os.environ["DATABASE_STORAGE_URL"].rstrip("/")
 _SUPABASE_SERVICE_KEY = os.environ["DATABASE_SERVICE_KEY"]
 _STORAGE_BUCKET = os.environ.get("DATABASE_STORAGE_BUCKET", "avatars")
 
