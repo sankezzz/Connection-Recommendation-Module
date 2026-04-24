@@ -10,13 +10,6 @@ from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-
-
-def _parse_vec(v) -> list[float]:
-    """pgvector returns vectors as strings '[0.1,0.2,...]' through raw SQL."""
-    if isinstance(v, str):
-        return [float(x) for x in v.strip("[]").split(",")]
-    return list(v)
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.post.post_recommendation_module.constants import (
@@ -35,6 +28,20 @@ from app.modules.post.post_recommendation_module.vector import (
 )
 from app.modules.profile.models import Profile, Profile_Commodity
 from app.modules.connections.models import UserConnection
+
+
+def _parse_vec(v) -> list[float]:
+    """
+    Normalise a pgvector column value to list[float].
+    Raw text() SQL queries bypass the ORM type codec, so pgvector returns the
+    vector as a string '[v1,v2,...]' instead of a Python list. This handles
+    both the string case and the numpy-array case (when the codec is active).
+    """
+    if isinstance(v, str):
+        return [float(x) for x in v.strip("[]").split(",")]
+    if hasattr(v, "tolist"):   # numpy array
+        return v.tolist()
+    return list(v)
 
 
 # ---------------------------------------------------------------------------
