@@ -357,6 +357,11 @@ def get_recommendations(db: Session, user_id: UUID) -> dict:
             FROM user_embeddings
             WHERE user_id != CAST(:uid AS uuid)
               AND is_vector IS NOT NULL
+              AND user_id NOT IN (
+                  SELECT following_id
+                  FROM user_connections
+                  WHERE follower_id = CAST(:uid AS uuid)
+              )
             ORDER BY is_vector <=> CAST(:vec AS vector)
             LIMIT :k
         """),
