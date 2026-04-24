@@ -256,13 +256,19 @@ def search_users(
     q: str | None = None,
     role: str | None = None,
     commodity: str | None = None,
-) -> list[dict]:
+    city: str | None = None,
+    verified_only: bool = False,
+    page: int = 1,
+    limit: int = 20,
+) -> dict:
     """
     Filtered user search against the real profile table.
-    q       — partial match on name / business_name
-    role    — exact match: trader | broker | exporter
-    commodity — partial match on commodity name
-    Returns at most 50 results. Excludes the calling user.
+    q             — partial match on name / business_name
+    role          — exact match: trader | broker | exporter
+    commodity     — partial match on commodity name
+    city          — partial match on city
+    verified_only — only return profiles where is_verified=True
+    Excludes the calling user. Supports pagination via page/limit.
     """
     query = (
         db.query(Profile)
@@ -282,7 +288,7 @@ def search_users(
         if role_row:
             query = query.filter(Profile.role_id == role_row.id)
         else:
-            return []
+            return {"total": 0, "page": page, "limit": limit, "results": []}
 
     if commodity:
         query = (
@@ -297,7 +303,20 @@ def search_users(
             Profile.name.ilike(f"%{q}%") | Profile.business_name.ilike(f"%{q}%")
         )
 
-    return [_fmt_profile(p) for p in query.limit(50).all()]
+    if city:
+        query = query.filter(Profile.city.ilike(f"%{city}%"))
+
+    if verified_only:
+        query = query.filter(Profile.is_verified == True)  # noqa: E712
+
+    total = query.count()
+    profiles = query.offset((page - 1) * limit).limit(limit).all()
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "results": [_fmt_profile(p) for p in profiles],
+    }
 
 
 def search_suggestions(db: Session, q: str) -> list[dict]:

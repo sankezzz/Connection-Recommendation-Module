@@ -166,13 +166,19 @@ def sent_requests(
 def search(
     user_id: UUID,
     db: Session = Depends(get_db),
-    q:         str | None = Query(default=None, description="Partial match on name or business name"),
-    role:      str | None = Query(default=None, description="trader | broker | exporter"),
-    commodity: str | None = Query(default=None, description="Partial match on commodity name"),
+    q:             str | None = Query(default=None, description="Partial match on name or business name"),
+    role:          str | None = Query(default=None, description="trader | broker | exporter"),
+    commodity:     str | None = Query(default=None, description="Partial match on commodity name"),
+    city:          str | None = Query(default=None, description="Partial match on city"),
+    verified_only: bool       = Query(default=False, description="Only return verified users"),
+    page:          int        = Query(default=1, ge=1),
+    limit:         int        = Query(default=20, ge=1, le=100),
 ):
     """Filtered user search. user_id is excluded from results. All query params optional."""
-    results = service.search_users(db, me=user_id, q=q, role=role, commodity=commodity)
-    return {"total": len(results), "results": results}
+    return service.search_users(
+        db, me=user_id, q=q, role=role, commodity=commodity,
+        city=city, verified_only=verified_only, page=page, limit=limit,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

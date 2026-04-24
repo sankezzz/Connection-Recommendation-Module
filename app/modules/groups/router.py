@@ -71,9 +71,11 @@ def _handle(fn, *args, **kwargs):
 @router.get("/suggestions/{user_id}")
 def suggest_groups(
     user_id: UUID,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    results = _handle(get_group_suggestions, db, user_id)
+    results = _handle(get_group_suggestions, db, user_id, page=page, limit=limit)
     return ok(results, "Group suggestions fetched")
 
 

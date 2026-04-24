@@ -106,6 +106,12 @@ def _require_admin(db: Session, group_id: UUID, user_id: UUID) -> None:
         raise GroupPermissionError("Admin access required")
 
 
+def _require_member(db: Session, group_id: UUID, user_id: UUID) -> None:
+    membership = _get_membership(db, group_id, user_id)
+    if not membership:
+        raise GroupPermissionError("Must be a group member")
+
+
 def _build_group_out(group: Group, membership: Optional[GroupMember]) -> GroupOut:
     return GroupOut(
         id=group.id,
@@ -489,7 +495,7 @@ def toggle_favorite(db: Session, group_id: UUID, user_id: UUID) -> dict:
 def get_or_create_invite_link(
     db: Session, group_id: UUID, user_id: UUID, base_url: str = "https://api.vanijyaa.com"
 ) -> InviteLinkOut:
-    _require_admin(db, group_id, user_id)
+    _require_member(db, group_id, user_id)
     group = _get_group_or_raise(db, group_id)
 
     if not group.invite_link_token:
@@ -538,7 +544,9 @@ def get_group_suggestions(
     db: Session,
     user_id: UUID,
     top_k: int = TOP_K,
-) -> list[GroupSuggestionOut]:
+    page: int = 1,
+    limit: int = 20,
+) -> dict:
     """
     Two-stage group recommendation:
       Stage 1 — pgvector HNSW cosine ANN (<=> operator) pre-filters candidates.
@@ -594,7 +602,7 @@ def get_group_suggestions(
     ][:top_k * 2]  # keep a buffer for activity reranking
 
     if not candidates:
-        return []
+        return {"total": 0, "page": page, "limit": limit, "results": []}
 
     # ── 4. Load groups + activity caches in bulk ────────────────────────────
     group_ids = [gid for gid, _ in candidates]
@@ -631,7 +639,7 @@ def get_group_suggestions(
     top = scored[:top_k]
 
     # ── 6. Build response ───────────────────────────────────────────────────
-    results: list[GroupSuggestionOut] = []
+    all_results: list[GroupSuggestionOut] = []
     for final_score, group, sim, act in top:
         reasons = build_match_reasons(
             user_commodities=user_commodities,
@@ -641,7 +649,7 @@ def get_group_suggestions(
             cosine_sim=sim,
             act_score=act,
         )
-        results.append(
+        all_results.append(
             GroupSuggestionOut(
                 group=_build_group_out(group, None),
                 match_score=final_score,
@@ -649,4 +657,10 @@ def get_group_suggestions(
             )
         )
 
-    return results
+    start = (page - 1) * limit
+    return {
+        "total": len(all_results),
+        "page": page,
+        "limit": limit,
+        "results": all_results[start : start + limit],
+    }
