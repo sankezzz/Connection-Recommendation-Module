@@ -52,6 +52,7 @@ log = logging.getLogger(__name__)
 GEMINI_MODEL = "gemini-2.0-flash"
 
 _gemini_client: genai.Client | None = None
+_gemini_quota_exhausted: bool = False
 
 
 def _get_client() -> genai.Client:
@@ -103,23 +104,28 @@ def _keyword_classify(title: str, content: str) -> dict:
     return {"cluster_id": 10, "severity": 3.0}
 
 
-def classify_article(title: str, content: str) -> dict:
-    sentences = ". ".join(content.split(". ")[:3]).strip() if content else ""
-    snippet   = sentences[:400] if sentences else ""
-    prompt    = f"{GEMINI_SYSTEM_PROMPT}\n\nTitle: {title}\n\nSnippet: {snippet}"
+def classify_article(title: str, content: str) -> tuple[dict, bool]:
+    """Returns (classification, used_gemini).  used_gemini=False means keyword fallback was used."""
+    global _gemini_quota_exhausted
 
-    try:
-        client   = _get_client()
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-        )
-        raw = response.text
-        raw = re.sub(r"```(?:json)?", "", raw).strip().strip("`")
-        return json.loads(raw)
-    except Exception as exc:
-        log.warning("Gemini classify failed (%s), using keyword fallback", exc)
-        return _keyword_classify(title, content)
+    if not _gemini_quota_exhausted:
+        sentences = ". ".join(content.split(". ")[:3]).strip() if content else ""
+        snippet   = sentences[:400] if sentences else ""
+        prompt    = f"{GEMINI_SYSTEM_PROMPT}\n\nTitle: {title}\n\nSnippet: {snippet}"
+        try:
+            client   = _get_client()
+            response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+            raw = response.text
+            raw = re.sub(r"```(?:json)?", "", raw).strip().strip("`")
+            return json.loads(raw), True
+        except Exception as exc:
+            if "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
+                _gemini_quota_exhausted = True
+                log.warning("Gemini quota exhausted — skipping Gemini for remainder of this run")
+            else:
+                log.warning("Gemini classify failed (%s), using keyword fallback", exc)
+
+    return _keyword_classify(title, content), False
 
 
 # ── RSS fetching ──────────────────────────────────────────────────────────────
@@ -209,8 +215,9 @@ def ingest() -> dict:
                     continue
                 seen_urls.add(url)
 
-                classification = classify_article(item["title"], item["content"])
-                time.sleep(6)  # stay under 10 req/min Gemini rate limit
+                classification, used_gemini = classify_article(item["title"], item["content"])
+                if used_gemini:
+                    time.sleep(6)  # stay under 10 req/min Gemini rate limit
                 article = NewsArticle(
                     source_id=source.id,
                     title=item["title"],
