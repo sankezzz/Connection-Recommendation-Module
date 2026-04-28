@@ -1,0 +1,4 @@
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+firebase-admin 7.4.0 requires httpx[http2]==0.28.1, but you have httpx 0.27.2 which is incompatible.
+google-genai 1.73.1 requires httpx<1.0.0,>=0.28.1, but you have httpx 0.27.2 which is incompatible.
+Successfully installed httpx-0.27.2

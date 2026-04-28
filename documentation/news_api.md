@@ -111,10 +111,10 @@ Every endpoint that returns an article includes this shape:
   "trader_impact": "Traders may face higher procurement costs for wheat.",
   "broker_impact": "Brokers should anticipate increased trading activity.",
   "exporter_impact": "Exporters might see reduced margins due to higher domestic prices.",
-
   "liked": false,
   "saved": false,
   "like_count": 42,
+
   "comment_count": 7,
   "share_count": 15
 }

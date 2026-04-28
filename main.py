@@ -72,6 +72,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Vanijyaa API", lifespan=lifespan)
 
+
+app.get("/",status_code=200)(lambda: {"message": "Server is up and running!"})
+
 # Auth module
 app.include_router(auth_router)
 
