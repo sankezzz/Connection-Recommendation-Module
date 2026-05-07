@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import Depends
@@ -22,10 +23,24 @@ def get_db():
         db.close()
 
 
+@dataclass
+class CurrentUser:
+    user_id: UUID
+    profile_id: int
+
+
+def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
+    """
+    Decode access token → CurrentUser(user_id, profile_id).
+    Both IDs come from JWT claims — zero DB calls.
+    """
+    claims = decode_access_token(token)
+    return CurrentUser(user_id=claims.user_id, profile_id=claims.profile_id)
+
+
 def get_current_user_id(token: str = Depends(oauth2_scheme)) -> UUID:
-    """JWT-only validation — signature + expiry checked by PyJWT, no DB round trip."""
-    user_id, _ = decode_access_token(token)
-    return user_id
+    """Convenience dep for endpoints that only need user_id."""
+    return decode_access_token(token).user_id
 
 
 def get_onboarding_claims(token: str = Depends(oauth2_scheme)) -> OnboardingClaims:

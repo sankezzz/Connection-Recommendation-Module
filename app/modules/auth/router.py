@@ -75,6 +75,7 @@ def firebase_verify(
     access_token, refresh_token = create_session(
         db,
         existing_user.id,
+        existing_user.profile.id,
         device_info=payload.device_info,
         ip_address=ip,
     )
@@ -124,7 +125,8 @@ def logout(
     The client must send its access token in the Authorization header.
     """
     try:
-        _, session_id = decode_access_token(token)
+        claims = decode_access_token(token)
+        session_id = claims.session_id
     except HTTPException:
         # Token already expired/invalid — treat as already logged out
         return ok(None, "Logged out.")

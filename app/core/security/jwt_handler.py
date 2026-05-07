@@ -12,7 +12,7 @@ ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 USER_ID_CLAIM = "sub"
 ONBOARDING_TOKEN_TYPE = "onboarding"
 ACCESS_TOKEN_TYPE = "access"
-ONBOARDING_TOKEN_EXPIRE_MINUTES = 15
+ONBOARDING_TOKEN_EXPIRE_MINUTES = 30
 
 
 def _secret() -> str:
@@ -26,13 +26,26 @@ def _secret() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Access token — short-lived, jti = session row UUID (enables revocation)
+# Access token
+# Claims: sub=user_id, pid=profile_id, jti=session_id, type, exp
 # ---------------------------------------------------------------------------
 
-def create_access_token(user_id: UUID, session_id: UUID) -> str:
-    """Issues a short-lived access token bound to a DB session row via `jti`."""
+@dataclass
+class AccessTokenClaims:
+    user_id: UUID
+    profile_id: int
+    session_id: UUID
+
+
+def create_access_token(user_id: UUID, session_id: UUID, profile_id: int) -> str:
+    """
+    Issues a short-lived access token.
+    - `jti` binds it to a UserSession row (enables revocation).
+    - `pid` carries profile_id so no DB lookup is needed per request.
+    """
     payload = {
         "sub": str(user_id),
+        "pid": profile_id,
         "jti": str(session_id),
         "type": ACCESS_TOKEN_TYPE,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -40,8 +53,8 @@ def create_access_token(user_id: UUID, session_id: UUID) -> str:
     return jwt.encode(payload, _secret(), algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str) -> tuple[UUID, UUID]:
-    """Decode access token → (user_id, session_id). Raises HTTPException on any failure."""
+def decode_access_token(token: str) -> AccessTokenClaims:
+    """Decode and validate an access token. Raises HTTPException on any failure."""
     try:
         payload = jwt.decode(token, _secret(), algorithms=[ALGORITHM])
     except jwt.ExpiredSignatureError:
@@ -52,19 +65,25 @@ def decode_access_token(token: str) -> tuple[UUID, UUID]:
     if payload.get("type") != ACCESS_TOKEN_TYPE:
         raise HTTPException(status_code=401, detail="Invalid token type")
 
-    raw_sub = payload.get(USER_ID_CLAIM)
+    raw_sub = payload.get("sub")
     raw_jti = payload.get("jti")
-    if not raw_sub or not raw_jti:
+    raw_pid = payload.get("pid")
+
+    if not raw_sub or not raw_jti or raw_pid is None:
         raise HTTPException(status_code=401, detail="Token missing required claims")
 
     try:
-        return UUID(str(raw_sub)), UUID(str(raw_jti))
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Token contains malformed IDs")
+        return AccessTokenClaims(
+            user_id=UUID(str(raw_sub)),
+            profile_id=int(raw_pid),
+            session_id=UUID(str(raw_jti)),
+        )
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Token contains malformed claims")
 
 
 # ---------------------------------------------------------------------------
-# Onboarding token — 15 min, used during profile creation steps, no DB session
+# Onboarding token — 15 min, pre-profile, no DB session
 # ---------------------------------------------------------------------------
 
 def create_onboarding_token(user_id: UUID, phone_number: str, country_code: str) -> str:
@@ -97,7 +116,7 @@ def decode_onboarding_token(token: str) -> UUID:
     if payload.get("token_type") != ONBOARDING_TOKEN_TYPE:
         raise HTTPException(status_code=401, detail="Invalid token type — onboarding token required")
 
-    raw_id = payload.get(USER_ID_CLAIM)
+    raw_id = payload.get("sub")
     if raw_id is None:
         raise HTTPException(status_code=401, detail="Token missing 'sub' claim")
 
@@ -119,7 +138,7 @@ def decode_onboarding_claims(token: str) -> OnboardingClaims:
     if payload.get("token_type") != ONBOARDING_TOKEN_TYPE:
         raise HTTPException(status_code=401, detail="Invalid token type — onboarding token required")
 
-    raw_id = payload.get(USER_ID_CLAIM)
+    raw_id = payload.get("sub")
     if raw_id is None:
         raise HTTPException(status_code=401, detail="Token missing 'sub' claim")
 
@@ -133,12 +152,3 @@ def decode_onboarding_claims(token: str) -> OnboardingClaims:
         phone_number=payload.get("phone_number", ""),
         country_code=payload.get("country_code", ""),
     )
-
-
-# ---------------------------------------------------------------------------
-# Legacy shim — keeps existing callers (profile router, etc.) working unchanged
-# ---------------------------------------------------------------------------
-
-def decode_token(token: str) -> UUID:
-    user_id, _ = decode_access_token(token)
-    return user_id

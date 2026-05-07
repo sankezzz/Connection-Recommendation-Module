@@ -36,7 +36,7 @@ On errors:
 
 | Token | Lifetime | What it's for |
 |-------|----------|---------------|
-| `onboarding_token` | 15 minutes | Only for profile creation steps (new users) |
+| `onboarding_token` | 30 minutes | Only for profile creation steps (new users) |
 | `access_token` | **10 hours** (36,000 seconds) | Every protected API call |
 | `refresh_token` | 30 days | Getting a new `access_token` when it expires |
 
@@ -45,6 +45,22 @@ All tokens are sent in the `Authorization` header:
 ```
 Authorization: Bearer <token>
 ```
+
+### What's inside the access token (decoded)
+
+```json
+{
+  "sub": "550e8400-e29b-41d4-a716-446655440000",
+  "pid": 42,
+  "jti": "session-uuid",
+  "type": "access",
+  "exp": 1746351600
+}
+```
+
+- `sub` → `user_id` (UUID)
+- `pid` → `profile_id` (int) — **both IDs are in the token**, so you never need to pass them as query params
+- The server reads these from the token on every call — no extra DB lookup
 
 ---
 
@@ -189,13 +205,13 @@ Authorization: Bearer <onboarding_token>
 }
 ```
 
-Store the `id` as `user_id` — you'll need it for some profile APIs.
+The `id` here is the `user_id` (UUID). You do **not** need to store it — every protected API reads identity from the JWT automatically.
 
 **Error responses:**
 
 | Status | detail | Meaning |
 |--------|--------|---------|
-| 401 | `Onboarding token has expired` | 15 min window passed, restart from Step 1 |
+| 401 | `Onboarding token has expired` | 30 min window passed, restart from Step 1 |
 | 409 | `Phone number already registered` | Race condition — user already exists, go to Step 1 again |
 
 ---
@@ -248,6 +264,8 @@ Authorization: Bearer <onboarding_token>
       "id": 42,
       "name": "Ravi Kumar",
       "role_id": 1,
+      "phone_number": "9876543210",
+      "country_code": "+91",
       "commodities": [
         { "id": 1, "name": "Rice" },
         { "id": 2, "name": "Cotton" }
@@ -260,6 +278,7 @@ Authorization: Bearer <onboarding_token>
       "is_user_verified": false,
       "is_business_verified": false,
       "followers_count": 0,
+      "posts_count": 0,
       "business_name": "Kumar Agro Pvt Ltd",
       "city": "Pune",
       "state": "Maharashtra",
@@ -281,7 +300,7 @@ Authorization: Bearer <onboarding_token>
 // Onboarding complete — store tokens and navigate home
 await storage.write(key: 'access_token',  value: data['access_token']);
 await storage.write(key: 'refresh_token', value: data['refresh_token']);
-await storage.write(key: 'user_id',       value: data['profile']['id'].toString());
+// user_id and profile_id are embedded in the JWT — no need to store them separately
 // Navigate to home
 ```
 
@@ -292,7 +311,7 @@ await storage.write(key: 'user_id',       value: data['profile']['id'].toString(
 | 400 | `quantity_min cannot be greater than quantity_max` | Fix the values |
 | 400 | `Invalid role_id: X. Use 1=Trader, 2=Broker, 3=Exporter.` | Wrong role |
 | 400 | `Invalid commodity_ids: [X]` | Commodity ID doesn't exist |
-| 401 | `Onboarding token has expired` | 15 min window passed, restart |
+| 401 | `Onboarding token has expired` | 30 min window passed, restart |
 | 404 | `User not found — create user first via POST /profile/user` | Step 2 was skipped |
 | 409 | `Profile already exists for this user` | Already created, skip to home |
 
@@ -493,15 +512,34 @@ Future<void> checkAuthOnStartup() async {
 
 ---
 
-## Complete Endpoint List (Auth Module)
+## Complete Endpoint List
+
+### Auth Endpoints
 
 | Method | Endpoint | Auth Required | Purpose |
 |--------|----------|---------------|---------|
 | POST | `/auth/firebase-verify` | None | Exchange Firebase OTP token |
-| POST | `/profile/user` | `onboarding_token` | Create user DB row (step 2) |
-| POST | `/profile/` | `onboarding_token` | Create profile + get tokens (step 3) |
 | POST | `/auth/refresh` | None (refresh token in body) | Rotate access token |
 | POST | `/auth/logout` | `access_token` | Revoke session |
+
+### Profile Endpoints
+
+| Method | Endpoint | Auth Required | Notes |
+|--------|----------|---------------|-------|
+| POST | `/profile/user` | `onboarding_token` | Onboarding step 1 — create user row |
+| POST | `/profile/` | `onboarding_token` | Onboarding step 2 — create profile, returns token pair |
+| GET | `/profile/me` | `access_token` | Get your own full profile |
+| PATCH | `/profile/` | `access_token` | Update your profile |
+| PATCH | `/profile/user/fcm-token` | `access_token` | Update push notification token |
+| POST | `/profile/verify` | `access_token` | Submit verification documents |
+| GET | `/profile/avatar-upload-url` | `access_token` | Get signed URL to upload avatar |
+| PATCH | `/profile/avatar` | `access_token` | Save avatar URL after upload |
+| DELETE | `/profile/` | `access_token` | Delete your profile |
+| DELETE | `/profile/user` | `access_token` | Delete your account entirely |
+| GET | `/profile/{profile_id}` | None | View any user's public profile |
+
+> **No query params for identity.** Every protected endpoint reads `user_id` and `profile_id` directly
+> from the JWT — you never pass them in the URL. The only thing you send is the `Authorization: Bearer` header.
 
 ---
 
@@ -553,5 +591,5 @@ These IDs are fixed and will not change.
 ```
 Access token:   600 minutes  =  10 hours   =  36,000 seconds
 Refresh token:  30 days      =  720 hours  =  2,592,000 seconds
-Onboarding:     15 minutes   =             =  900 seconds
+Onboarding:     30 minutes   =             =  1,800 seconds
 ```

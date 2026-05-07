@@ -172,6 +172,7 @@ def _load_profile_for_user(db: Session, user_id: UUID) -> Profile | None:
     return (
         db.query(Profile)
         .options(
+            joinedload(Profile.user),
             joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
             joinedload(Profile.interests).joinedload(Profile_Interest.interest),
         )
@@ -180,15 +181,18 @@ def _load_profile_for_user(db: Session, user_id: UUID) -> Profile | None:
     )
 
 
-def _to_response(profile: Profile) -> ProfileResponse:
+def _to_response(profile: Profile, posts_count: int = 0) -> ProfileResponse:
     return ProfileResponse(
         id=profile.id,
         name=profile.name,
         role_id=profile.role_id,
+        phone_number=profile.user.phone_number,
+        country_code=profile.user.country_code,
         is_verified=profile.is_verified,
         is_user_verified=profile.is_user_verified,
         is_business_verified=profile.is_business_verified,
         followers_count=profile.followers_count,
+        posts_count=posts_count,
         commodities=[CommodityOut.model_validate(pc.commodity) for pc in profile.commodities],
         interests=[InterestOut.model_validate(pi.interest) for pi in profile.interests],
         business_name=profile.business_name,
@@ -288,7 +292,7 @@ def create_profile(db: Session, user_id: UUID, payload: ProfileCreate) -> Profil
         loaded_profile = _load_profile_for_user(db, user_id)
         if not loaded_profile:
             raise ProfileNotFoundError("Profile not found")
-        return _to_response(loaded_profile)
+        return _to_response(loaded_profile, posts_count=0)
     except Exception:
         db.rollback()
         raise
@@ -298,7 +302,10 @@ def get_my_profile(db: Session, user_id: UUID) -> ProfileResponse:
     profile = _load_profile_for_user(db, user_id)
     if not profile:
         raise ProfileNotFoundError("Profile not found")
-    return _to_response(profile)
+    posts_count = (
+        db.query(func.count(Post.id)).filter(Post.profile_id == profile.id).scalar() or 0
+    )
+    return _to_response(profile, posts_count=posts_count)
 
 
 def update_profile(db: Session, user_id: UUID, payload: ProfileUpdate) -> ProfileResponse:
@@ -352,7 +359,10 @@ def update_profile(db: Session, user_id: UUID, payload: ProfileUpdate) -> Profil
 
     profile_resp = _load_profile_for_user(db, user_id)
     assert profile_resp is not None
-    return _to_response(profile_resp)
+    posts_count = (
+        db.query(func.count(Post.id)).filter(Post.profile_id == profile_resp.id).scalar() or 0
+    )
+    return _to_response(profile_resp, posts_count=posts_count)
 
 
 def delete_profile(db: Session, user_id: UUID) -> None:
@@ -401,12 +411,13 @@ def get_profile_by_id(db: Session, profile_id: int) -> ProfilePublicResponse:
         role_id=profile.role_id,
         is_verified=profile.is_verified,
         commodities=[CommodityOut.model_validate(pc.commodity) for pc in profile.commodities],
+        followers_count=profile.followers_count,
+        posts_count=posts_count,
         business_name=profile.business_name,
         city=profile.city,
         state=profile.state,
         latitude=profile.latitude,
         longitude=profile.longitude,
-        posts_count=posts_count,
         avatar_url=profile.avatar_url,
     )
 

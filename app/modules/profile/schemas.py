@@ -82,12 +82,15 @@ class ProfileResponse(BaseModel):
     id: int
     name: str
     role_id: int
+    phone_number: str       # from users table — shown as read-only on Edit Profile screen
+    country_code: str
     commodities: List[CommodityOut]
     interests: List[InterestOut]
     is_verified: bool
     is_user_verified: bool
     is_business_verified: bool
     followers_count: int
+    posts_count: int
     business_name: Optional[str]
     city: Optional[str] = None
     state: Optional[str] = None
@@ -104,12 +107,13 @@ class ProfilePublicResponse(BaseModel):
     role_id: int
     is_verified: bool
     commodities: List[CommodityOut]
+    followers_count: int    # shown on other users' profile header
+    posts_count: int
     business_name: Optional[str]
     city: Optional[str] = None
     state: Optional[str] = None
     latitude: float
     longitude: float
-    posts_count: int
     avatar_url: Optional[str] = None
 
 

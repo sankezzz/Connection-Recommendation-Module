@@ -15,7 +15,7 @@ revocation works even within the JWT's lifetime).
 | Property | Value |
 |----------|-------|
 | Format | JWT (signed HS256) |
-| Expiry | **15 minutes** |
+| Expiry | **30 minutes** |
 | Stored in DB? | No |
 | Used for | Only the two profile-creation steps |
 
@@ -42,7 +42,7 @@ user receives a proper access + refresh token pair.
 | Property | Value |
 |----------|-------|
 | Format | JWT (signed HS256) |
-| Expiry | **1 hour** (configurable via `ACCESS_TOKEN_EXPIRE_MINUTES` in `.env`) |
+| Expiry | **10 hours** (configurable via `ACCESS_TOKEN_EXPIRE_MINUTES=600` in `.env`) |
 | Stored in DB? | No — only its `jti` (session ID) is stored as the `user_sessions.id` column |
 | Used for | Every protected API call via `Authorization: Bearer <token>` |
 
@@ -50,13 +50,16 @@ user receives a proper access + refresh token pair.
 ```json
 {
   "sub": "user-uuid",
+  "pid": 42,
   "jti": "session-uuid",
   "type": "access",
   "exp": 1234567890
 }
 ```
 
-- `sub` — the user's UUID, used to identify who is making the request
+- `sub` — the user's UUID (from the `users` table)
+- `pid` — the user's profile ID (int from the `profile` table). Baked into the
+  token so every endpoint gets both IDs with **zero DB lookups**.
 - `jti` (JWT ID) — the UUID of the `user_sessions` row this token belongs to.
   This is the key to revocation: if you set `user_sessions.is_active = false`,
   all access tokens that reference that session immediately stop working.
@@ -137,7 +140,7 @@ This two-layer check means:
 
 ## Token Refresh Flow (After Access Token Expires)
 
-The access token lasts **1 hour**. When it expires, the client gets a `401`
+The access token lasts **10 hours**. When it expires, the client gets a `401`
 response from any API. It should then:
 
 ```
@@ -150,7 +153,7 @@ Body: { "refresh_token": "<raw>" }
                                         WHERE refresh_token_hash = <hash>
                                         AND is_active = true
                                      3. Check expires_at — reject if past 30 days
-                                     4. Generate new access_token (new 1-hr JWT,
+                                     4. Generate new access_token (new 10-hr JWT,
                                         same session_id in jti)
                                      5. Generate new refresh_token (new random string)
                                      6. UPDATE user_sessions
@@ -190,7 +193,7 @@ hash will no longer match — their attempt will fail with 401.
   │                              │                          │  Verify token with Firebase Admin SDK
   │                              │                          │  Extract phone + country_code
   │                              │                          │  No user found in DB
-  │                              │                          │  Create onboarding_token (15 min JWT)
+  │                              │                          │  Create onboarding_token (30 min JWT)
   │                              │◄─────────────────────────│
   │                              │  { is_new_user: true,    │
   │                              │    onboarding_token }    │
@@ -217,12 +220,12 @@ hash will no longer match — their attempt will fail with 401.
   │                              │                          │    - id = new UUID (this is the jti)
   │                              │                          │    - refresh_token_hash = SHA256(random)
   │                              │                          │    - expires_at = now + 30 days
-  │                              │                          │  Create access_token JWT (1 hour)
+  │                              │                          │  Create access_token JWT (10 hours)
   │                              │◄─────────────────────────│
   │                              │  { profile,              │
   │                              │    access_token,         │
   │                              │    refresh_token,        │
-  │                              │    expires_in: 3600 }    │
+  │                              │    expires_in: 36000 }   │
   │                              │                          │
   │                              │  *** Store both tokens ***
   │                              │  Onboarding complete — user is in the app
@@ -247,7 +250,7 @@ hash will no longer match — their attempt will fail with 401.
       │  { is_new_user: false,            │
       │    access_token,                  │
       │    refresh_token,                 │
-      │    expires_in: 3600,              │
+      │    expires_in: 36000,             │
       │    user_id, profile_id }          │
       │                                   │
       │  *** Store both tokens ***
@@ -292,7 +295,7 @@ hash will no longer match — their attempt will fail with 401.
       │                                   │  Hash incoming token
       │                                   │  Find session by hash
       │                                   │  Session still valid (30 days)
-      │                                   │  Generate new access_token (1 hour)
+      │                                   │  Generate new access_token (10 hours)
       │                                   │  Generate new refresh_token (random)
       │                                   │  Update session.refresh_token_hash
       │◄──────────────────────────────────│
@@ -328,7 +331,7 @@ hash will no longer match — their attempt will fail with 401.
       │                                   │
       │  Any future call with old token   │
       │──────────────────────────────────►│
-      │                                   │  JWT decodes fine (still in 1-hr window)
+      │                                   │  JWT decodes fine (still in 10-hr window)
       │                                   │  DB lookup: is_active = false
       │◄──────────────────────────────────│
       │  401 "Session has been revoked"   │
@@ -353,7 +356,7 @@ By tying every JWT to a `user_sessions` row via `jti`, you can:
   independent of how many times the access token is refreshed
 
 The refresh token (30 days) is the "stay logged in" mechanism. The access token
-(1 hour) is what actually gates API calls.
+(10 hours) is what actually gates API calls.
 
 ---
 
@@ -374,7 +377,7 @@ Response (new user):
 ```json
 {
   "is_new_user": true,
-  "onboarding_token": "<15-min JWT>",
+  "onboarding_token": "<30-min JWT>",
   "token_type": "bearer"
 }
 ```
@@ -383,9 +386,9 @@ Response (returning user):
 ```json
 {
   "is_new_user": false,
-  "access_token": "<1-hr JWT>",
+  "access_token": "<10-hr JWT>",
   "refresh_token": "<opaque 30-day token>",
-  "expires_in": 3600,
+  "expires_in": 36000,
   "user_id": "uuid",
   "profile_id": 42,
   "token_type": "bearer"
@@ -409,10 +412,10 @@ first real token pair:
 ```json
 {
   "profile": { ... },
-  "access_token": "<1-hr JWT>",
+  "access_token": "<10-hr JWT>",
   "refresh_token": "<opaque 30-day token>",
   "token_type": "bearer",
-  "expires_in": 3600
+  "expires_in": 36000
 }
 ```
 
@@ -431,10 +434,10 @@ Request:
 Response:
 ```json
 {
-  "access_token": "<new 1-hr JWT>",
+  "access_token": "<new 10-hr JWT>",
   "refresh_token": "<new rotated refresh token>",
   "token_type": "bearer",
-  "expires_in": 3600
+  "expires_in": 36000
 }
 ```
 
@@ -455,6 +458,6 @@ Add these to your `.env`:
 ```env
 JWT_SECRET_KEY=<long random string>
 JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=60
+ACCESS_TOKEN_EXPIRE_MINUTES=600
 REFRESH_TOKEN_EXPIRE_DAYS=30
 ```

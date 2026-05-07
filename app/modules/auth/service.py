@@ -88,6 +88,7 @@ def _hash_token(raw: str) -> str:
 def create_session(
     db: Session,
     user_id: UUID,
+    profile_id: int,
     *,
     device_info: str | None = None,
     ip_address: str | None = None,
@@ -96,7 +97,8 @@ def create_session(
     Create a new UserSession row and issue (access_token, refresh_token).
 
     The refresh token is an opaque random string; only its SHA-256 hash is
-    persisted.  The access token embeds the session UUID as `jti`.
+    persisted.  The access token embeds session UUID as `jti` and profile_id
+    as `pid` so callers never need an extra DB lookup per request.
     """
     session_id = uuid.uuid4()
     raw_refresh = secrets.token_urlsafe(48)
@@ -114,7 +116,7 @@ def create_session(
     db.add(session)
     db.commit()
 
-    access_token = create_access_token(user_id, session_id)
+    access_token = create_access_token(user_id, session_id, profile_id)
     return access_token, raw_refresh
 
 
@@ -123,6 +125,8 @@ def refresh_session(db: Session, raw_refresh_token: str) -> tuple[str, str]:
     Validate a refresh token, rotate it, and return a new (access_token, refresh_token).
     Raises ValueError if the token is invalid, expired, or already revoked.
     """
+    from app.modules.profile.models import Profile
+
     token_hash = _hash_token(raw_refresh_token)
     session = (
         db.query(UserSession)
@@ -141,13 +145,19 @@ def refresh_session(db: Session, raw_refresh_token: str) -> tuple[str, str]:
         db.commit()
         raise ValueError("Refresh token has expired. Please sign in again.")
 
-    # Rotate: new refresh token, new access token, same session row
+    # Fetch profile_id to keep it current in the new token
+    profile_row = db.query(Profile.id).filter(Profile.users_id == session.user_id).first()
+    if profile_row is None:
+        raise ValueError("User profile not found.")
+    profile_id: int = profile_row[0]
+
+    # Rotate: new refresh token + new access token, same session row
     new_raw_refresh = secrets.token_urlsafe(48)
     session.refresh_token_hash = _hash_token(new_raw_refresh)
     session.last_used_at = datetime.now(timezone.utc)
     db.commit()
 
-    new_access = create_access_token(session.user_id, session.id)
+    new_access = create_access_token(session.user_id, session.id, profile_id)
     return new_access, new_raw_refresh
 
 
