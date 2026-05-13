@@ -437,21 +437,25 @@ GET /connections/search?page=2&limit=10
 **Success `200`:**
 ```json
 {
+  "success": true,
+  "message": "Search results fetched",
+  "data": {
     "total": 2,
     "page": 1,
     "limit": 20,
     "results": [
-        {
-            "user_id": "a1b2c3d4-...",
-            "name": "Anita Shah",
-            "business_name": "Shah Exports",
-            "role": "exporter",
-            "commodity": ["sugar"],
-            "city": "Mumbai",
-            "is_verified": true,
-            "qty_range": "1000–5000mt"
-        }
+      {
+        "user_id": "a1b2c3d4-...",
+        "name": "Anita Shah",
+        "business_name": "Shah Exports",
+        "role": "exporter",
+        "commodity": ["sugar"],
+        "city": "Mumbai",
+        "is_verified": true,
+        "qty_range": "1000–5000mt"
+      }
     ]
+  }
 }
 ```
 
@@ -473,18 +477,21 @@ GET /connections/search/suggestions?q=rav
 **Success `200`:**
 ```json
 {
-    "q": "rav",
+  "success": true,
+  "message": "Suggestions fetched",
+  "data": {
     "total": 3,
     "suggestions": [
-        {
-            "user_id": "c37a3257-...",
-            "name": "Ravi Traders",
-            "business_name": "Ravi Agro Pvt Ltd",
-            "role": "trader",
-            "commodity": ["rice", "cotton"],
-            "is_verified": false
-        }
+      {
+        "user_id": "c37a3257-...",
+        "name": "Ravi Traders",
+        "business_name": "Ravi Agro Pvt Ltd",
+        "role": "trader",
+        "commodity": ["rice", "cotton"],
+        "is_verified": false
+      }
     ]
+  }
 }
 ```
 
