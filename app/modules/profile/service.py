@@ -21,6 +21,7 @@ from app.shared.utils.storage import (
 _STORAGE_BUCKET = os.environ.get("DATABASE_STORAGE_BUCKET", "avatars")
 
 from app.modules.profile.models import (
+    Business,
     Commodity,
     Interest,
     Profile,
@@ -175,6 +176,7 @@ def _load_profile_for_user(db: Session, user_id: UUID) -> Profile | None:
             joinedload(Profile.user),
             joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
             joinedload(Profile.interests).joinedload(Profile_Interest.interest),
+            joinedload(Profile.business),
         )
         .filter(Profile.users_id == user_id)
         .first()
@@ -196,11 +198,11 @@ def _to_response(profile: Profile, posts_count: int = 0) -> ProfileResponse:
         posts_count=posts_count,
         commodities=[CommodityOut.model_validate(pc.commodity) for pc in profile.commodities],
         interests=[InterestOut.model_validate(pi.interest) for pi in profile.interests],
-        business_name=profile.business_name,
-        city=profile.city,
-        state=profile.state,
-        latitude=profile.latitude,
-        longitude=profile.longitude,
+        business_name=profile.business.business_name,
+        city=profile.business.city,
+        state=profile.business.state,
+        latitude=profile.business.latitude,
+        longitude=profile.business.longitude,
         avatar_url=profile.avatar_url,
     )
 
@@ -225,8 +227,8 @@ def _upsert_user_embedding(db: Session, user_id: UUID) -> None:
     vec = build_candidate_vector(
         commodity_list=commodity_names,
         role=role_str,
-        lat=float(profile.latitude),
-        lon=float(profile.longitude),
+        lat=float(profile.business.latitude),
+        lon=float(profile.business.longitude),
         qty_min=int(profile.quantity_min),
         qty_max=int(profile.quantity_max),
     )
@@ -262,16 +264,20 @@ def create_profile(db: Session, user_id: UUID, payload: ProfileCreate) -> Profil
             users_id=user_id,
             role_id=payload.role_id,
             name=payload.name.strip(),
-            business_name=payload.business_name.strip() if payload.business_name else None,
-            city=payload.city.strip() if payload.city else None,
-            state=payload.state.strip() if payload.state else None,
-            latitude=payload.latitude,
-            longitude=payload.longitude,
             quantity_min=payload.quantity_min,
             quantity_max=payload.quantity_max,
         )
         db.add(profile)
         db.flush()
+
+        db.add(Business(
+            profile_id=profile.id,
+            business_name=payload.business_name.strip() if payload.business_name else None,
+            city=payload.city.strip() if payload.city else None,
+            state=payload.state.strip() if payload.state else None,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+        ))
 
         if commodity_ids:
             db.add_all([
@@ -309,8 +315,16 @@ def get_my_profile(db: Session, user_id: UUID) -> ProfileResponse:
     return _to_response(profile, posts_count=posts_count)
 
 
+_BUSINESS_FIELDS = {"business_name", "city", "state", "latitude", "longitude"}
+
+
 def update_profile(db: Session, user_id: UUID, payload: ProfileUpdate) -> ProfileResponse:
-    profile = db.query(Profile).filter(Profile.users_id == user_id).first()
+    profile = (
+        db.query(Profile)
+        .options(joinedload(Profile.business))
+        .filter(Profile.users_id == user_id)
+        .first()
+    )
     if not profile:
         raise ProfileNotFoundError("Profile not found")
 
@@ -322,8 +336,13 @@ def update_profile(db: Session, user_id: UUID, payload: ProfileUpdate) -> Profil
         raise ProfileValidationError("quantity_min cannot exceed quantity_max")
 
     for field, value in data.items():
-        if field not in ("commodities", "interests"):
+        if field not in _BUSINESS_FIELDS and field not in ("commodities", "interests"):
             setattr(profile, field, value)
+
+    business_data = {k: v for k, v in data.items() if k in _BUSINESS_FIELDS}
+    if business_data:
+        for field, value in business_data.items():
+            setattr(profile.business, field, value)
 
     if "commodities" in data:
         current = {pc.commodity_id for pc in profile.commodities}
@@ -394,6 +413,7 @@ def get_profile_by_id(db: Session, profile_id: int) -> ProfilePublicResponse:
     profile = (
         db.query(Profile)
         .options(
+            joinedload(Profile.business),
             joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
         )
         .filter(Profile.id == profile_id)
@@ -414,11 +434,11 @@ def get_profile_by_id(db: Session, profile_id: int) -> ProfilePublicResponse:
         followers_count=profile.followers_count,
         following_count=profile.following_count,
         posts_count=posts_count,
-        business_name=profile.business_name,
-        city=profile.city,
-        state=profile.state,
-        latitude=profile.latitude,
-        longitude=profile.longitude,
+        business_name=profile.business.business_name,
+        city=profile.business.city,
+        state=profile.business.state,
+        latitude=profile.business.latitude,
+        longitude=profile.business.longitude,
         avatar_url=profile.avatar_url,
     )
 

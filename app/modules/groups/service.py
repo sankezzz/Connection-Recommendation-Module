@@ -19,7 +19,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session, joinedload
 
-from app.modules.profile.models import Profile, Profile_Commodity, Role
+from app.modules.profile.models import Business, Profile, Profile_Commodity, Role
 from app.modules.groups.models import (
     Group,
     GroupActivityCache,
@@ -73,6 +73,7 @@ def _get_profile_or_raise(db: Session, user_id: UUID) -> Profile:
     profile = (
         db.query(Profile)
         .options(
+            joinedload(Profile.business),
             joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
         )
         .filter(Profile.users_id == user_id)
@@ -562,8 +563,8 @@ def get_group_suggestions(
     want_vec = build_query_vector(
         commodity_list=user_commodities,
         role=user_role,
-        lat=float(profile.latitude),
-        lon=float(profile.longitude),
+        lat=float(profile.business.latitude),
+        lon=float(profile.business.longitude),
         qty_min=int(profile.quantity_min),
         qty_max=int(profile.quantity_max),
     )

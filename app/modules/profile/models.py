@@ -67,7 +67,7 @@ class Interest(Base):
 
 
 # ---------------------------------------------------------------------------
-# Profile — no separate Business table, location lives here directly
+# Profile — business location lives in the Business table (1:1)
 # ---------------------------------------------------------------------------
 
 class Profile(Base):
@@ -79,13 +79,7 @@ class Profile(Base):
     role_id: Mapped[int] = mapped_column(Integer, ForeignKey("roles.id"))
 
     name: Mapped[str] = mapped_column(String(100))
-    business_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-
-    city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    latitude: Mapped[float] = mapped_column(Float)
-    longitude: Mapped[float] = mapped_column(Float)
-
+    
     quantity_min: Mapped[Decimal] = mapped_column(Numeric)
     quantity_max: Mapped[Decimal] = mapped_column(Numeric)
 
@@ -109,7 +103,23 @@ class Profile(Base):
     commodities: Mapped[list["Profile_Commodity"]] = relationship("Profile_Commodity", back_populates="profile", cascade="all, delete-orphan")
     interests: Mapped[list["Profile_Interest"]] = relationship("Profile_Interest", back_populates="profile", cascade="all, delete-orphan")
     documents: Mapped[list["Profile_Document"]] = relationship("Profile_Document", back_populates="profile", cascade="all, delete-orphan")
+    business: Mapped["Business"] = relationship("Business", back_populates="profile", uselist=False, cascade="all, delete-orphan")
 
+
+class Business(Base):
+    __tablename__ = "business"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(Integer, ForeignKey("profile.id", ondelete="CASCADE"), unique=True)
+
+    business_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    state: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    latitude: Mapped[float] = mapped_column(Float)
+    longitude: Mapped[float] = mapped_column(Float)
+
+    profile: Mapped["Profile"] = relationship("Profile", back_populates="business")
 
 # ---------------------------------------------------------------------------
 # Junction tables
@@ -143,7 +153,6 @@ class Profile_Interest(Base):
 
     profile: Mapped["Profile"] = relationship("Profile", back_populates="interests")
     interest: Mapped["Interest"] = relationship("Interest", back_populates="profile_interests")
-
 
 # ---------------------------------------------------------------------------
 # Profile documents — for optional verification (Screen 6)

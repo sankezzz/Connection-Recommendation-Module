@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.modules.connections.models import MessageRequest, UserConnection
 from app.modules.profile.models import (
+    Business,
     Commodity,
     Profile,
     Profile_Commodity,
@@ -36,11 +37,12 @@ _ROLE_ID_TO_NAME = {1: "trader", 2: "broker", 3: "exporter"}
 # ---------------------------------------------------------------------------
 
 def _load_profile(db: Session, user_id: UUID) -> Profile | None:
-    """Load a profile with role + commodities in one query."""
+    """Load a profile with role + commodities + business in one query."""
     return (
         db.query(Profile)
         .options(
             joinedload(Profile.role),
+            joinedload(Profile.business),
             joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
         )
         .filter(Profile.users_id == user_id)
@@ -56,6 +58,7 @@ def _load_profiles_bulk(db: Session, user_ids: list[UUID]) -> dict[UUID, Profile
         db.query(Profile)
         .options(
             joinedload(Profile.role),
+            joinedload(Profile.business),
             joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
         )
         .filter(Profile.users_id.in_(user_ids))
@@ -69,13 +72,13 @@ def _fmt_profile(profile: Profile) -> dict:
     return {
         "user_id":       str(profile.users_id),
         "name":          profile.name,
-        "business_name": profile.business_name,
+        "business_name": profile.business.business_name,
         "role":          profile.role.name.lower() if profile.role else None,
         "commodity":     [pc.commodity.name.lower() for pc in profile.commodities],
         "is_verified":   profile.is_verified,
         "qty_range":     f"{int(profile.quantity_min)}–{int(profile.quantity_max)}mt",
-        "latitude":      profile.latitude,
-        "longitude":     profile.longitude,
+        "latitude":      profile.business.latitude,
+        "longitude":     profile.business.longitude,
     }
 
 
@@ -316,11 +319,18 @@ def search_users(
 
     if q:
         query = query.filter(
-            Profile.name.ilike(f"%{q}%") | Profile.business_name.ilike(f"%{q}%")
+            Profile.name.ilike(f"%{q}%")
+            | Profile.id.in_(
+                db.query(Business.profile_id).filter(Business.business_name.ilike(f"%{q}%"))
+            )
         )
 
     if city:
-        query = query.filter(Profile.city.ilike(f"%{city}%"))
+        query = query.filter(
+            Profile.id.in_(
+                db.query(Business.profile_id).filter(Business.city.ilike(f"%{city}%"))
+            )
+        )
 
     if verified_only:
         query = query.filter(Profile.is_verified == True)  # noqa: E712
@@ -345,10 +355,14 @@ def search_suggestions(db: Session, q: str) -> list[dict]:
         db.query(Profile)
         .options(
             joinedload(Profile.role),
+            joinedload(Profile.business),
             joinedload(Profile.commodities).joinedload(Profile_Commodity.commodity),
         )
         .filter(
-            Profile.name.ilike(f"%{q}%") | Profile.business_name.ilike(f"%{q}%")
+            Profile.name.ilike(f"%{q}%")
+            | Profile.id.in_(
+                db.query(Business.profile_id).filter(Business.business_name.ilike(f"%{q}%"))
+            )
         )
         .limit(8)
         .all()
@@ -379,8 +393,8 @@ def get_recommendations(db: Session, user_id: UUID) -> dict:
     want_vec = build_query_vector(
         commodity_list=commodity_names,
         role=role_str,
-        lat=float(profile.latitude),
-        lon=float(profile.longitude),
+        lat=float(profile.business.latitude),
+        lon=float(profile.business.longitude),
         qty_min=int(profile.quantity_min),
         qty_max=int(profile.quantity_max),
     )

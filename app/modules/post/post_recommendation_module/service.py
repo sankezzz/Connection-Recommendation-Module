@@ -344,8 +344,8 @@ def get_recommended_posts(db: Session, profile_id: int, dry_run: bool = False) -
     user_vec = build_user_feed_vector(
         commodity_ids=commodity_ids,
         role_id=profile.role_id,
-        lat=float(profile.latitude),
-        lon=float(profile.longitude),
+        lat=float(profile.business.latitude),
+        lon=float(profile.business.longitude),
         qty_min_mt=float(profile.quantity_min),
         qty_max_mt=float(profile.quantity_max),
     )

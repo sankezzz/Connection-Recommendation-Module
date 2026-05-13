@@ -86,7 +86,7 @@ def get_user_share_link(db: Session, profile_id: int) -> dict:
         raise DeepLinkNotFoundError("Profile not found")
 
     deep_link = f"{APP_SCHEME}://user/{profile_id}"
-    parts = [p for p in [profile.business_name, profile.city] if p]
+    parts = [p for p in [profile.business.business_name, profile.business.city] if p]
     description = " · ".join(parts) if parts else None
     share_text = (
         f"Connect with {profile.name} on Vanijyaa\n\n"

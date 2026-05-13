@@ -148,7 +148,7 @@ def _profile_location(db: Session, profile_id: int) -> tuple[float, float]:
     profile = db.query(Profile).filter(Profile.id == profile_id).first()
     if not profile:
         return 0.0, 0.0
-    return float(profile.latitude), float(profile.longitude)
+    return float(profile.business.latitude), float(profile.business.longitude)
 
 
 # ----------------------------------------------------------------------------
