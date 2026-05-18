@@ -18,18 +18,20 @@ A complete reference for the follow system, message requests, and user search.
 6. [Follow APIs](#6-follow-apis)
 7. [Message Request APIs](#7-message-request-apis)
 8. [Search APIs](#8-search-apis)
-9. [Shared User Object](#9-shared-user-object)
-10. [Error Reference](#10-error-reference)
+9. [Recommendation APIs](#9-recommendation-apis)
+10. [Shared User Object](#10-shared-user-object)
+11. [Error Reference](#11-error-reference)
 
 ---
 
 ## 1. Module Overview
 
-The connections module handles three things:
+The connections module handles four things:
 
 - **Follow** — one-directional, no approval needed. User A follows User B instantly.
 - **Message requests** — bidirectional, requires acceptance. User A sends a request, User B must accept or decline.
 - **Search** — text search across all profiles with optional filters.
+- **Recommendations** — vector-based "people you may know" matching using pgvector HNSW cosine ANN search. Lives under `/recommendations/`.
 
 ---
 
@@ -112,6 +114,8 @@ Mutating endpoints require `Authorization: Bearer <access_token>`. The acting us
 | `GET` | `/connections/message-requests/sent` | Bearer token | Requests sent |
 | `GET` | `/connections/search` | Bearer token | Search profiles — filters: `q`, `role`, `commodity`, `city`, `verified_only`; pagination: `page`, `limit` |
 | `GET` | `/connections/search/suggestions?q=...` | **Public** | Name/business suggestions |
+| `GET` | `/recommendations/` | Bearer token | Top-20 vector-matched users (people you may know) |
+| `POST` | `/recommendations/search` | **Public** | Ad-hoc vector search with custom payload — no account needed |
 
 ---
 
@@ -497,7 +501,108 @@ GET /connections/search/suggestions?q=rav
 
 ---
 
-## 9. Shared User Object
+## 9. Recommendation APIs
+
+Recommendations live under `/recommendations/` (separate prefix from `/connections/`). They use pgvector HNSW cosine ANN search against stored IS vectors in `user_embeddings`.
+
+---
+
+### `GET /recommendations/`
+
+Returns the top-20 best-matched users for the authenticated user. Requires `Authorization: Bearer <access_token>`.
+
+How it works:
+1. Loads the caller's profile (role, commodities, business location, quantity range).
+2. Builds a WANT vector using `build_query_vector()`.
+3. Runs HNSW ANN cosine search — excludes the caller and users they already follow.
+4. Returns up to 20 results ordered by similarity descending.
+
+**Example:**
+```
+GET /recommendations/
+Authorization: Bearer <access_token>
+```
+
+**Success `200`:**
+```json
+{
+  "success": true,
+  "message": "Recommendations fetched",
+  "data": {
+    "user_id": "c37a3257-dc3f-43be-9fb0-33cf918b11ff",
+    "role": "trader",
+    "commodity": ["rice", "cotton"],
+    "qty_range": "100–500mt",
+    "total": 20,
+    "results": [
+      {
+        "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "name": "Ravi Kumar",
+        "business_name": "Ravi Agro Pvt Ltd",
+        "role": "exporter",
+        "commodity": ["rice"],
+        "is_verified": true,
+        "qty_range": "200–800mt",
+        "latitude": 19.076,
+        "longitude": 72.877,
+        "similarity": 0.9312
+      }
+    ]
+  }
+}
+```
+
+**Error `404`** — profile not found (onboarding not complete):
+```json
+{ "detail": "Profile not found — complete onboarding first" }
+```
+
+---
+
+### `POST /recommendations/search`
+
+Ad-hoc vector search with a custom payload. No account or token required. Useful for showing preview matches before or during signup.
+
+**Request body:**
+```json
+{
+  "commodity": ["rice", "cotton"],
+  "role": "trader",
+  "latitude_raw": 19.076,
+  "longitude_raw": 72.877,
+  "qty_min_mt": 100,
+  "qty_max_mt": 500
+}
+```
+
+**Success `200`:**
+```json
+{
+  "success": true,
+  "message": "Search results fetched",
+  "data": {
+    "total": 20,
+    "results": [
+      {
+        "user_id": "a1b2c3d4-...",
+        "name": "Ravi Kumar",
+        "business_name": "Ravi Agro Pvt Ltd",
+        "role": "exporter",
+        "commodity": ["rice"],
+        "is_verified": true,
+        "qty_range": "200–800mt",
+        "latitude": 19.076,
+        "longitude": 72.877,
+        "similarity": 0.9312
+      }
+    ]
+  }
+}
+```
+
+---
+
+## 10. Shared User Object  
 
 Every profile object across all endpoints has this shape:
 
@@ -524,7 +629,7 @@ Some endpoints add extra fields:
 
 ---
 
-## 10. Error Reference
+## 11. Error Reference
 
 | Status | When it happens |
 |---|---|

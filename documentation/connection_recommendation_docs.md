@@ -68,7 +68,7 @@ from app.encoding.vector import vector_layout  # returns a labelled breakdown
 
 ### 3.1 Commodity (`dims 0–2`)
 
-One-hot encoding against `ALL_COMMODITIES` in `app/config.py`.
+One-hot encoding against `ALL_COMMODITIES` in `app/modules/connections/weights_config.py`.
 
 ```python
 # Example: user trades cotton and rice
@@ -96,7 +96,7 @@ encode_role_candidate("trader")   # → [0.0, 0.0, 1.5]  (broker, exporter, trad
 encode_role_searcher("trader")    # → [0.825, 0.45, 0.30]
 ```
 
-Affinity and offers tables live in `app/config.py` under `ROLE_AFFINITY` and `ROLE_OFFERS`.
+Affinity and offers tables live in `app/modules/connections/weights_config.py` under `ROLE_AFFINITY` and `ROLE_OFFERS`.
 
 ### 3.3 Geo (`dims 6–8`)
 
@@ -157,7 +157,7 @@ build_query_vector(commodity_list, role, lat, lon, qty_min, qty_max)
 
 ## 5. Boost Weights
 
-All weights live in `app/config.py`. Changing any of them **invalidates all stored embeddings** — run `python migrate_pgvec.py --reset` afterwards.
+All weights live in `app/modules/connections/weights_config.py`. Changing any of them **invalidates all stored embeddings** — null out stored vectors (`UPDATE user_embeddings SET is_vector = NULL`) and trigger a profile update for each user.
 
 | Constant | Value | Effect |
 |---|---|---|
@@ -231,6 +231,8 @@ Fetch top 20 matches for the authenticated user. Requires `Authorization: Bearer
 4. **Filters out users the requesting user is already following** — results only contain users not yet connected.
 5. Returns top 20 with full profile info and similarity score.
 
+Requires `Authorization: Bearer <access_token>`.
+
 **Response:**
 ```json
 {
@@ -243,10 +245,13 @@ Fetch top 20 matches for the authenticated user. Requires `Authorization: Bearer
     {
       "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "name": "Ravi Kumar",
+      "business_name": "Ravi Agro Pvt Ltd",
       "role": "exporter",
       "commodity": ["rice"],
       "is_verified": true,
       "qty_range": "200–800mt",
+      "latitude": 19.076,
+      "longitude": 72.877,
       "similarity": 0.9312
     }
   ]
@@ -271,6 +276,8 @@ Ad-hoc search without needing an existing `user_id`. Useful for previewing match
 }
 ```
 
+No auth required.
+
 **Response:** same `results` format as above (no `user_id` in the outer wrapper).
 
 ---
@@ -294,14 +301,14 @@ alembic downgrade f6a7b8c9d0e1
 | `b5e7f9a2c3d1` | `user_embeddings` table with `is_vector JSONB` |
 | `a3b4c5d6e7f8` | Converts `is_vector` to `VECTOR(11)`, creates HNSW index |
 
-**After changing encoding logic or boost weights**, IS vectors in the DB are stale. Rebuild them by re-saving every profile (which triggers `_upsert_user_embedding`). For a bulk rebuild in development:
+**After changing encoding logic or boost weights**, IS vectors in the DB are stale. Rebuild them by re-saving every profile (which triggers `_upsert_user_embedding` in `app/modules/profile/service.py`). For a bulk rebuild in development:
 
 ```sql
--- Force all embeddings to rebuild on next profile update
+-- Null out all stored embeddings
 UPDATE user_embeddings SET is_vector = NULL;
 ```
 
-Then call `GET /recommendations/{user_id}/refresh` equivalent or re-run the profile update endpoint for each user.
+Then call `PATCH /profile/` (with any field) for each user to trigger `_upsert_user_embedding` and rebuild their vector.
 
 ---
 
@@ -309,19 +316,19 @@ Then call `GET /recommendations/{user_id}/refresh` equivalent or re-run the prof
 
 ### Adding a new commodity
 
-1. Append to `ALL_COMMODITIES` in `app/config.py` — **only at the end, never in the middle**.
+1. Append to `ALL_COMMODITIES` in `app/modules/connections/weights_config.py` — **only at the end, never in the middle**.
 2. The vector dimension increases by 1 — update the Supabase column: `ALTER TABLE "Users" ALTER COLUMN embedding TYPE vector(N)`.
 3. Re-run `python migrate_pgvec.py --reset` to rebuild all embeddings.
 
 ### Adding a new role
 
-1. Add the role to `ROLE_AFFINITY` and `ROLE_OFFERS` in `app/config.py`.
+1. Add the role to `ROLE_AFFINITY` and `ROLE_OFFERS` in `app/modules/connections/weights_config.py`.
 2. If you're adding a new *dimension* (e.g. a fourth role type), `ROLE_DIMS` grows, the vector dimension increases, and you need to follow the same column + reset steps as above.
 3. If the new role fits within existing dimensions (just new affinity/offers weights), no dimension change is needed — just re-run `--reset`.
 
 ### Changing boost weights
 
-Edit the constants in `app/config.py`, then run `python migrate_pgvec.py --reset`. No schema changes needed.
+Edit the constants in `app/modules/connections/weights_config.py`, then null out stored vectors and trigger profile updates to rebuild embeddings. No schema changes needed.
 
 ---
 
@@ -335,6 +342,6 @@ Edit the constants in `app/config.py`, then run `python migrate_pgvec.py --reset
 | Adjust how role types seek each other | Edit `ROLE_AFFINITY` in `config.py` |
 | Change what each role signals it offers | Edit `ROLE_OFFERS` in `config.py` |
 
-**After any config change:** `python migrate_pgvec.py --reset`
+**After any config change:** null out `user_embeddings.is_vector` and trigger profile updates to rebuild all embeddings.
 
-**Testing a change without a full reset:** call `GET /recommendations/{user_id}/refresh` on a handful of representative users and compare similarity scores before and after.
+**Testing a change without a full reset:** call `GET /recommendations/` for a handful of representative users and compare similarity scores before and after.
